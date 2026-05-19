@@ -89,10 +89,6 @@ main{flex:1;padding:1.5rem;max-width:1500px;margin:0 auto;width:100%}
 .tbl-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);overflow-x:auto}
 .tbl-wrap::-webkit-scrollbar{height:4px}
 .tbl-wrap::-webkit-scrollbar-thumb{background:var(--border2);border-radius:10px}
-.tm-tooltip{position:fixed;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:10px 14px;font-size:12px;pointer-events:none;z-index:999;display:none;min-width:140px;box-shadow:0 4px 20px rgba(0,0,0,.5)}
-.tm-tooltip .tm-ticker{font-size:15px;font-weight:700;color:var(--text-h);margin-bottom:4px}
-.tm-tooltip .tm-row{display:flex;justify-content:space-between;gap:16px;color:var(--text-s);margin-top:2px}
-.tm-tooltip .tm-val{color:var(--text);font-weight:600}
 table{width:100%;border-collapse:collapse;white-space:nowrap;font-size:13px}
 th{padding:10px 14px;font-size:10px;text-transform:uppercase;color:var(--text-s);border-bottom:1px solid var(--border);letter-spacing:.06em;font-weight:500;text-align:left}
 td{padding:12px 14px;border-bottom:1px solid var(--border);vertical-align:middle}
@@ -157,9 +153,11 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 .close-btn:hover{color:var(--text)}
 .modal::-webkit-scrollbar{width:4px}
 .modal::-webkit-scrollbar-thumb{background:var(--border2);border-radius:10px}
-.tm-tooltip{position:fixed;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:10px 14px;font-size:12px;pointer-events:none;z-index:999;display:none;min-width:140px;box-shadow:0 4px 20px rgba(0,0,0,.5)}
+
+/* ── TOOLTIP TREEMAP ─────────────────────────────── */
+.tm-tooltip{position:fixed;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:10px 14px;font-size:12px;pointer-events:none;z-index:9999;display:none;min-width:160px;box-shadow:0 8px 24px rgba(0,0,0,.5)}
 .tm-tooltip .tm-ticker{font-size:15px;font-weight:700;color:var(--text-h);margin-bottom:4px}
-.tm-tooltip .tm-row{display:flex;justify-content:space-between;gap:16px;color:var(--text-s);margin-top:2px}
+.tm-tooltip .tm-row{display:flex;justify-content:space-between;gap:16px;color:var(--text-s);margin-top:4px}
 .tm-tooltip .tm-val{color:var(--text);font-weight:600}
 
 /* ── FAB ─────────────────────────────────────────── */
@@ -194,14 +192,10 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 .spinner{width:18px;height:18px;border:2px solid var(--border2);border-top-color:var(--primary);border-radius:50%;animation:spin .7s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .empty{text-align:center;padding:48px 20px;color:var(--text-s);font-size:13px;line-height:1.7}
-.bar-track{height:3px;background:var(--bg4);border-radius:4px;margin-top:4px}
-.bar-fill{height:3px;border-radius:4px;background:var(--primary)}
+.bar-track{height:3px;background:var(--bg4);border-radius:4px;margin-top:4px; overflow:hidden;}
+.bar-fill{height:3px;border-radius:4px;background:var(--primary); transition: width 0.3s;}
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:10px}
-.tm-tooltip{position:fixed;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:10px 14px;font-size:12px;pointer-events:none;z-index:999;display:none;min-width:140px;box-shadow:0 4px 20px rgba(0,0,0,.5)}
-.tm-tooltip .tm-ticker{font-size:15px;font-weight:700;color:var(--text-h);margin-bottom:4px}
-.tm-tooltip .tm-row{display:flex;justify-content:space-between;gap:16px;color:var(--text-s);margin-top:2px}
-.tm-tooltip .tm-val{color:var(--text);font-weight:600}
 details summary{cursor:pointer;list-style:none;outline:none;font-size:14px;font-weight:600;color:var(--text-h)}
 details summary::-webkit-details-marker{display:none}
 details p{font-size:13px;color:var(--text-s);margin-top:10px;margin-bottom:6px;line-height:1.7}
@@ -295,6 +289,10 @@ details strong{color:var(--text)}
     </div>
 
     <div class="section" id="s-performance">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+        <h2 style="font-size:18px;font-weight:700;color:var(--text-h)">Performance</h2>
+        <button class="btn-s" style="width:auto; padding:6px 12px; font-size:12px;" onclick="openRecalcModal()">Recalculate History</button>
+      </div>
       <div class="g4" id="perf-kpis" style="margin-bottom:.75rem"></div>
       <div class="card" style="padding:0;margin-bottom:.75rem">
         <div style="padding:1.25rem 1.25rem 0;height:320px;position:relative">
@@ -413,7 +411,7 @@ details strong{color:var(--text)}
       </div>
     </div>
     <div class="form-grid-2">
-      <div class="input-group"><label>Broker</label><select id="f-broker"></select></div>
+      <div class="input-group"><label>Broker</label><select id="f-broker" onchange="checkNewTicker()"></select></div>
       <div class="input-group" id="f-ticker-wrap">
         <label>Ticker</label>
         <input type="text" id="f-ticker" placeholder="SPY, BTC-USD…" style="text-transform:uppercase" oninput="checkNewTicker()"/>
@@ -456,6 +454,51 @@ details strong{color:var(--text)}
   </div>
 </div>
 
+<div class="overlay" id="modal-broker">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-header">
+      <h2>Add Broker</h2>
+      <button class="close-btn" onclick="closeModal('modal-broker')">✕</button>
+    </div>
+    <div id="broker-alert"></div>
+    <div class="input-group"><label>Broker name</label><input type="text" id="new-broker-name" placeholder="e.g. Interactive Brokers"/></div>
+    <div class="input-group"><label>Currency</label>
+      <select id="new-broker-currency">
+        <option value="USD">USD</option>
+        <option value="PEN">PEN</option>
+        <option value="EUR">EUR</option>
+      </select>
+    </div>
+    <div class="btn-row">
+      <button class="btn-s" onclick="closeModal('modal-broker')">Cancel</button>
+      <button class="btn-p" onclick="saveNewBroker()">Add Broker</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-recalc">
+  <div class="modal" style="max-width:400px">
+    <div class="modal-header">
+      <h2>Recalculate History</h2>
+      <button class="close-btn" onclick="closeModal('modal-recalc')">✕</button>
+    </div>
+    <p style="font-size:13px; color:var(--text-s); margin-bottom:1rem;">Select a date to recalculate external flows and total invested amounts from your transactions. Required for accurate TWRR/MWR after adding past deposits.</p>
+    <div class="input-group"><label>Start Date</label><input type="date" id="recalc-date"/></div>
+    
+    <div id="recalc-progress-wrap" class="hidden" style="margin-bottom:1rem;">
+      <div style="font-size:11px; color:var(--text-s); margin-bottom:4px;" id="recalc-status">Processing 0 / 0</div>
+      <div class="bar-track"><div class="bar-fill" id="recalc-bar" style="width:0%"></div></div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn-s" onclick="closeModal('modal-recalc')">Cancel</button>
+      <button class="btn-p" id="btn-run-recalc" onclick="runRecalc()">Start Process</button>
+    </div>
+  </div>
+</div>
+
+<div class="tm-tooltip" id="tm-tooltip"></div>
+
 <script>
 // ============================================================
 // CONSTANTES Y CONFIGURACIÓN
@@ -494,7 +537,8 @@ let S = {
   dividends: [],
   portfolioHistory: [],
   prices: {},      
-  benchmarks: {},  
+  benchmarks: {},
+  dynamicChartData: { twrr: [], roi: [] }
 };
 
 async function init() {
@@ -797,11 +841,67 @@ function globalPos(openArr) {
     m.marketValue+=p.marketValue; m.unrealizedPnl+=p.unrealizedPnl;
     m.fees+=p.fees; m.taxes+=p.taxes; m.dailyPnl+=p.dailyPnl;
   }
-  return Object.values(map).map(m=>({...m, avgCost:m.shares>0?m.totalCost/m.shares:0,
-    unrealizedPct:m.totalCost>0?m.unrealizedPnl/m.totalCost*100:0 }));
+  return Object.values(map).map(m=>{
+    const baseCost = m.marketValue - m.dailyPnl;
+    const dPct = baseCost > 0 ? (m.dailyPnl / baseCost) * 100 : 0;
+    return {...m, 
+      avgCost:m.shares>0?m.totalCost/m.shares:0,
+      unrealizedPct:m.totalCost>0?m.unrealizedPnl/m.totalCost*100:0,
+      dailyPct: dPct
+    };
+  });
+}
+
+// NUEVA FUNCIÓN PARA CALCULAR GRÁFICOS DINÁMICAMENTE
+function computeDynamicChartData() {
+  const hist = S.portfolioHistory;
+  if (!hist.length) return { twrr: [], roi: [] };
+
+  const flowByDate = {};
+  S.transactions.forEach(t => {
+    const d = t.date;
+    if (t.type === 'Deposit') flowByDate[d] = (flowByDate[d] || 0) + Math.abs(+(t.net_amount_usd || t.amount_usd || 0));
+    if (t.type === 'Withdrawal') flowByDate[d] = (flowByDate[d] || 0) - Math.abs(+(t.net_amount_usd || t.amount_usd || 0));
+  });
+
+  let twrrData = [], roiData = [];
+  let currentTwrr = 1;
+  let cumulativeInvested = 0;
+
+  for (let i = 0; i < hist.length; i++) {
+    const h = hist[i];
+    const date = h.date;
+    const endVal = +(h.portfolio_value_usd || 0);
+    const flowToday = flowByDate[date] || 0;
+    
+    cumulativeInvested += flowToday;
+
+    if (i === 0) {
+      twrrData.push(0);
+      roiData.push(0);
+      continue;
+    }
+
+    const startVal = +(hist[i - 1].portfolio_value_usd || 0);
+    
+    if (startVal > 0 || endVal > 0) {
+      const denom = startVal + flowToday;
+      if (denom > 0.01) {
+        currentTwrr *= endVal / denom;
+      }
+    }
+
+    twrrData.push((currentTwrr - 1) * 100);
+    roiData.push(cumulativeInvested > 0 ? ((endVal - cumulativeInvested) / cumulativeInvested) * 100 : 0);
+  }
+
+  S.dynamicChartData = { twrr: twrrData, roi: roiData };
 }
 
 function computeMetrics(txs, openArr, closedArr) {
+  // Siempre precalculamos los arreglos dinámicos primero
+  computeDynamicChartData();
+
   const deposits = txs.filter(t=>t.type==='Deposit');
   const totalInvested   = deposits.reduce((s,t)=>s+Math.abs(+(t.amount_usd||0)),0);
   const investedPEN     = deposits.filter(t=>+(t.amount_pen||0)>0).reduce((s,t)=>s+(+(t.amount_pen||0)),0);
@@ -834,7 +934,8 @@ function computeMetrics(txs, openArr, closedArr) {
   const roiAnn  = years>0?(Math.pow(1+roi/100,1/years)-1)*100:0;
   const twrrAnn = twrr!=null&&years>0?(Math.pow(1+twrr/100,1/years)-1)*100:null;
   
-  const mwrAnn  = computeMWR(txs, portVal); 
+  // Tasa Interna de Retorno (MWR) mejorada
+  let mwrAnn  = computeMWR(txs, portVal); 
   const mwrAcc  = mwrAnn != null && years > 0 ? (Math.pow(1 + mwrAnn/100, years) - 1) * 100 : null; 
 
   return { totalInvested, investedPEN, investedUSD, avgFX,
@@ -847,19 +948,12 @@ function computeTWRR() {
   const h = S.portfolioHistory;
   if (h.length < 2) return null;
 
-  // Your Excel convention:
-  // - portfolio_value_usd = shares × close price (market value only, no cash)
-  // - external_flow_usd is recorded on day BEFORE the deposit
-  //   (day 13 if money arrived day 14, so it's available at START of next period)
-  // Formula: R_i = end_val / (start_val + flow_on_start_date)
-  // where flow_on_start_date = external_flow_usd of h[i-1]
-
+  // Fórmula correcta TWRR: R_i = end_val / (start_val + flow_del_dia_anterior)
   let twrr = 1;
   let validPeriods = 0;
   for (let i = 1; i < h.length; i++) {
     const startVal = +(h[i-1].portfolio_value_usd || 0);
     const endVal   = +(h[i].portfolio_value_usd   || 0);
-    // Flow recorded on the START row (day before deposit hits portfolio)
     const flow     = +(h[i-1].external_flow_usd   || 0);
     if (endVal <= 0) continue;
     const denom = startVal + flow;
@@ -872,16 +966,13 @@ function computeTWRR() {
 }
 
 function computeMWR(txs, finalVal) {
-  // IRR: finds r such that NPV of all cash flows = 0
-  // Deposits = negative flows (money leaves your pocket)
-  // Withdrawals = positive flows (money returns to pocket)
-  // finalVal = current portfolio market value (positive, received "today")
   const flows = [];
   const now = new Date();
   for (const t of txs) {
     const d = new Date(t.date);
     const yrs = (now - d) / (365.25 * 86400000);
     if (yrs < 0) continue;
+    // Utilizamos el bruto de depositos
     if (t.type === 'Deposit') {
       flows.push({ t: yrs, cf: -Math.abs(+(t.amount_usd||0)) });
     } else if (t.type === 'Withdrawal') {
@@ -891,8 +982,8 @@ function computeMWR(txs, finalVal) {
   if (!flows.length || finalVal <= 0) return null;
   flows.push({ t: 0, cf: finalVal });
 
-  // Newton-Raphson
-  let r = 0.08; // start near typical equity return
+  // Newton-Raphson Mejorado
+  let r = 0.08; 
   for (let iter = 0; iter < 200; iter++) {
     let npv = 0, dnpv = 0;
     for (const f of flows) {
@@ -903,9 +994,9 @@ function computeMWR(txs, finalVal) {
     if (Math.abs(dnpv) < 1e-12) break;
     const nr = r - npv / dnpv;
     if (Math.abs(nr - r) < 1e-9) { r = nr; break; }
-    r = Math.max(-0.95, Math.min(nr, 10)); // clamp: -95% to +1000%
+    r = Math.max(-0.95, Math.min(nr, 10)); // Límite: -95% a +1000%
   }
-  return (r > -0.95 && r < 10) ? r * 100 : null; // return as %
+  return (r > -0.95 && r < 10) ? r * 100 : null;
 }
 
 function daysBetween(a,b){return Math.round((new Date(b)-new Date(a))/86400000);}
@@ -962,7 +1053,8 @@ function renderDashboard(open, cons, m) {
       </div>
     </div>`).join('') || '<div class="kpi-sub">No positions</div>';
 
-  const gainers = open.filter(p=>p.dailyPct!==0).sort((a,b)=>b.dailyPct-a.dailyPct).slice(0,3);
+  // Consolidado de Top Gainers
+  const gainers = cons.filter(p=>p.dailyPct!==0).sort((a,b)=>b.dailyPct-a.dailyPct).slice(0,3);
   document.getElementById('top-gainers').innerHTML = gainers.length
     ? gainers.map(p=>`<div><div style="font-weight:600">${p.ticker}</div><div class="${p.dailyPct>=0?'pos':'neg'}">${pct(p.dailyPct)}</div></div>`).join('')
     : '<div class="kpi-sub" style="width:100%">Prices loading…</div>';
@@ -1094,7 +1186,18 @@ function renderTreemap(cons) {
         padding:${h>40?'7px':'3px'};
         display:flex; flex-direction:column; justify-content:space-between;
         overflow:hidden; box-sizing:border-box; cursor:default;
-        border:1px solid rgba(255,255,255,0.06)">
+        border:1px solid rgba(255,255,255,0.06)"
+        onmouseenter="showTmTip(event, this)" 
+        onmousemove="moveTmTip(event)" 
+        onmouseleave="hideTmTip()"
+        data-ticker="${item.ticker}"
+        data-val="${item.val}"
+        data-pct="${pct_.toFixed(2)}"
+        data-shares="${item.shares}"
+        data-cost="${item.avgCost}"
+        data-unr="${item.unrealizedPnl}"
+        data-unrpct="${item.unrealizedPct}"
+        data-sector="${item.sector}">
         ${showLabel ? `<div>
           <div style="font-size:${w>80?'11':'9'}px;color:rgba(255,255,255,.8);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.ticker}</div>
           ${showAmt ? `<div style="font-size:${w>100?'14':'11'}px;font-weight:700;color:#fff;margin-top:1px">$${fmtI(item.val)}</div>` : ''}
@@ -1129,7 +1232,6 @@ function renderPieChart(open) {
   const cTotal=cVals.reduce((s,v)=>s+v,0);
   const CLASS_COLS={'ETF':'#3d5a99','Stock':'#9f7aea','Crypto':'#d69e2e','Mutual Fund':'#2d7a6e','Other':'#4a5568'};
   const cBgs=cLabels.map(l=>CLASS_COLS[l]||'#4a5568');
-  document.getElementById('stacked-bar').style.marginTop='28px';
   document.getElementById('stacked-bar').innerHTML = cLabels.map((l,i)=>{
     const pct_=cTotal>0?cVals[i]/cTotal*100:0;
     return `<div class="stacked-seg" style="background:${cBgs[i]};width:${pct_.toFixed(1)}%">${pct_>10?l+' '+pct_.toFixed(0)+'%':''}</div>`;
@@ -1236,7 +1338,24 @@ function renderPerformance(m) {
 }
 
 function renderPerfChart() {
-  const hist = filterHistByTF(S.portfolioHistory, S.perfTF);
+  let rawHist = S.portfolioHistory;
+  
+  let startIndex = 0;
+  if(S.perfTF !== 'ALL') {
+    const now=new Date(), cutoff=new Date();
+    if(S.perfTF==='6M')cutoff.setMonth(now.getMonth()-6);
+    else if(S.perfTF==='YTD')cutoff.setMonth(0,1);
+    else if(S.perfTF==='1Y')cutoff.setFullYear(now.getFullYear()-1);
+    const cutStr=cutoff.toISOString().split('T')[0];
+    startIndex = rawHist.findIndex(h => h.date >= cutStr);
+    if(startIndex < 0) startIndex = 0;
+  }
+
+  const hist = rawHist.slice(startIndex);
+  const twrrData = S.dynamicChartData.twrr.slice(startIndex);
+  const roiData = S.dynamicChartData.roi.slice(startIndex);
+  const labels = hist.map(h=>h.date);
+
   if (perfChartInst) { perfChartInst.destroy(); perfChartInst=null; }
   if (!hist.length) return;
 
@@ -1252,9 +1371,6 @@ function renderPerfChart() {
     });
   }
 
-  const labels = hist.map(h=>h.date);
-  const twrrData = hist.map(h=>h.twrr_cumulative!=null?+(h.twrr_cumulative)*100:null);
-  const roiData  = hist.map(h=>h.roi_cumulative!=null?+(h.roi_cumulative)*100:null);
   const spyData  = benchmarkPct('SPY', labels);
   const qqqData  = benchmarkPct('QQQ', labels);
 
@@ -1429,13 +1545,40 @@ function calcNet() {
   const n=document.getElementById('f-net'); if(n)n.value=(a-f-t).toFixed(2);
 }
 
-// ── FUNCIÓN DE AUTO-DETECCIÓN TICKER NUEVO ──
+// ── AUTO-DETECCIÓN Y SUGERENCIA DE SHARES ──
 function checkNewTicker() {
   const t = document.getElementById('f-ticker')?.value.toUpperCase().trim();
   const exists = S.assets.find(a => a.ticker === t);
   const wrap = document.getElementById('f-gf-wrap');
+  const tp = document.getElementById('f-type').value;
+  
   if (t && !exists) { wrap?.classList.remove('hidden'); } 
   else { wrap?.classList.add('hidden'); }
+
+  // Auto-completar shares en "Sell"
+  const shareInput = document.getElementById('f-shares');
+  if (tp === 'Sell' && t && shareInput) {
+      const {open} = computePos(S.transactions);
+      const brokerId = document.getElementById('f-broker').value;
+      
+      // Filtrar por ticker y por broker (si hay uno específico seleccionado que no sea "all")
+      const relevantPos = open.filter(p => p.ticker === t && (brokerId ? p.broker_id === brokerId : true));
+      let availableShares = 0;
+      relevantPos.forEach(p => availableShares += p.shares);
+      
+      if (availableShares > 0) {
+          shareInput.value = availableShares.toFixed(4);
+          shareInput.style.borderColor = 'var(--primary)';
+          shareInput.style.borderWidth = '2px';
+      } else {
+          shareInput.value = '';
+          shareInput.style.borderColor = 'var(--border)';
+          shareInput.style.borderWidth = '1px';
+      }
+  } else if (shareInput) {
+      shareInput.style.borderColor = 'var(--border)';
+      shareInput.style.borderWidth = '1px';
+  }
 }
 
 async function saveTx() {
@@ -1528,14 +1671,14 @@ function setBroker(id) {
 function toggleDrop(){document.getElementById('broker-menu').classList.toggle('show');}
 window.addEventListener('click',e=>{if(!e.target.closest('.dropdown'))document.getElementById('broker-menu').classList.remove('show');});
 
-// ── MODAL ───────────────────────────────
+// ── MODALS & FAB ───────────────────────────────
 function openModal(id){
   if(id==='modal-tx'){
     S.editingTxId=null;
     document.getElementById('modal-tx-title').textContent='New Transaction';
     document.getElementById('save-tx-btn').textContent='Save Transaction';
     
-    // Auto-Clear Values para transacciones nuevas
+    // Auto-Clear Values
     const fieldsToClear = ['f-ticker', 'f-price', 'f-shares', 'f-amount', 'f-net', 'f-pen', 'f-fx', 'f-drip-s', 'f-drip-p', 'f-note', 'f-gf'];
     fieldsToClear.forEach(f => { const el=document.getElementById(f); if(el) el.value=''; });
     
@@ -1665,20 +1808,19 @@ async function updateTx() {
   await loadAll(); renderAll(); fetchPrices();
 }
 
-
-// ── TREEMAP TOOLTIP ────────────────────────────────
-function showTmTip(e, dataStr) {
-  const d = JSON.parse(dataStr);
+// ── HOVER TOOLTIPS ─────────────────────────────────
+function showTmTip(e, el) {
+  const ds = el.dataset;
   const t = document.getElementById('tm-tooltip');
-  const pnlCol = d.unr >= 0 ? 'var(--success)' : 'var(--error)';
+  const pnlCol = parseFloat(ds.unr) >= 0 ? 'var(--success)' : 'var(--error)';
   t.innerHTML = `
-    <div class="tm-ticker">${d.ticker}</div>
-    <div class="tm-row"><span>Value</span><span class="tm-val">$${parseFloat(d.val).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>
-    <div class="tm-row"><span>Weight</span><span class="tm-val">${d.pct}%</span></div>
-    <div class="tm-row"><span>Shares</span><span class="tm-val">${parseFloat(d.shares).toFixed(4)}</span></div>
-    <div class="tm-row"><span>Avg cost</span><span class="tm-val">$${parseFloat(d.avgCost).toFixed(2)}</span></div>
-    <div class="tm-row"><span>Unr. P/L</span><span style="color:${pnlCol};font-weight:600">${d.unr>=0?'+':''}$${Math.abs(parseFloat(d.unr)).toFixed(2)} (${parseFloat(d.unrPct).toFixed(2)}%)</span></div>
-    <div class="tm-row"><span>Sector</span><span class="tm-val">${d.sector}</span></div>`;
+    <div class="tm-ticker">${ds.ticker}</div>
+    <div class="tm-row"><span>Value</span><span class="tm-val">$${fmt(ds.val)}</span></div>
+    <div class="tm-row"><span>Weight</span><span class="tm-val">${ds.pct}%</span></div>
+    <div class="tm-row"><span>Shares</span><span class="tm-val">${parseFloat(ds.shares).toFixed(4)}</span></div>
+    <div class="tm-row"><span>Avg cost</span><span class="tm-val">$${fmt(ds.cost)}</span></div>
+    <div class="tm-row"><span>Unr. P/L</span><span style="color:${pnlCol};font-weight:600">${parseFloat(ds.unr)>=0?'+':''}$${fmt(Math.abs(ds.unr))} (${parseFloat(ds.unrpct).toFixed(2)}%)</span></div>
+    <div class="tm-row"><span>Sector</span><span class="tm-val">${ds.sector}</span></div>`;
   t.style.display = 'block';
   moveTmTip(e);
 }
@@ -1694,31 +1836,77 @@ function hideTmTip() {
   document.getElementById('tm-tooltip').style.display = 'none';
 }
 
+// ── BOTÓN RECALCULAR ────────────────────────────────
+function openRecalcModal() {
+  const hist = S.portfolioHistory;
+  document.getElementById('recalc-date').value = hist.length > 0 ? hist[0].date : today();
+  document.getElementById('recalc-progress-wrap').classList.add('hidden');
+  document.getElementById('recalc-bar').style.width = '0%';
+  document.getElementById('modal-recalc').classList.add('show');
+}
+
+async function runRecalc() {
+  const startDate = document.getElementById('recalc-date').value;
+  if (!startDate) return;
+  
+  document.getElementById('recalc-progress-wrap').classList.remove('hidden');
+  const btn = document.getElementById('btn-run-recalc');
+  btn.disabled = true;
+  btn.innerText = 'Processing...';
+
+  const flows = {};
+  S.transactions.forEach(t => {
+      if(t.type === 'Deposit' || t.type === 'Withdrawal') {
+          const amt = Math.abs(+(t.net_amount_usd || t.amount_usd || 0));
+          const sign = t.type === 'Deposit' ? 1 : -1;
+          flows[t.date] = (flows[t.date] || 0) + (amt * sign);
+      }
+  });
+
+  let histToUpdate = S.portfolioHistory.filter(h => h.date >= startDate).sort((a,b) => a.date.localeCompare(b.date));
+  let prevInvested = 0;
+  const pastHist = S.portfolioHistory.filter(h => h.date < startDate).sort((a,b) => b.date.localeCompare(a.date));
+  
+  if (pastHist.length > 0) {
+      prevInvested = +(pastHist[0].total_invested_usd || 0);
+  } else {
+      S.transactions.forEach(t => {
+          if (t.date < startDate) {
+              if (t.type === 'Deposit') prevInvested += Math.abs(+(t.net_amount_usd || t.amount_usd || 0));
+              if (t.type === 'Withdrawal') prevInvested -= Math.abs(+(t.net_amount_usd || t.amount_usd || 0));
+          }
+      });
+  }
+
+  const statusEl = document.getElementById('recalc-status');
+  const barEl = document.getElementById('recalc-bar');
+  let currentInvested = prevInvested;
+
+  for (let i = 0; i < histToUpdate.length; i++) {
+      const h = histToUpdate[i];
+      const date = h.date;
+      const flowToday = flows[date] || 0;
+      currentInvested += flowToday;
+      
+      statusEl.innerText = `Updating ${date} (${i+1}/${histToUpdate.length})`;
+      barEl.style.width = ((i+1)/histToUpdate.length * 100) + '%';
+
+      await db.from('portfolio_history').update({
+          external_flow_usd: flowToday,
+          total_invested_usd: currentInvested
+      }).eq('id', h.id);
+  }
+
+  statusEl.innerText = `Completed! Reloading data...`;
+  await loadAll();
+  renderAll();
+  
+  closeModal('modal-recalc');
+  btn.disabled = false;
+  btn.innerText = 'Start Process';
+}
+
 init();
 </script>
-
-<div class="overlay" id="modal-broker">
-  <div class="modal" style="max-width:380px">
-    <div class="modal-header">
-      <h2>Add Broker</h2>
-      <button class="close-btn" onclick="closeModal('modal-broker')">✕</button>
-    </div>
-    <div id="broker-alert"></div>
-    <div class="input-group"><label>Broker name</label><input type="text" id="new-broker-name" placeholder="e.g. Interactive Brokers"/></div>
-    <div class="input-group"><label>Currency</label>
-      <select id="new-broker-currency">
-        <option value="USD">USD</option>
-        <option value="PEN">PEN</option>
-        <option value="EUR">EUR</option>
-      </select>
-    </div>
-    <div class="btn-row">
-      <button class="btn-s" onclick="closeModal('modal-broker')">Cancel</button>
-      <button class="btn-p" onclick="saveNewBroker()">Add Broker</button>
-    </div>
-  </div>
-</div>
-
-<div class="tm-tooltip" id="tm-tooltip"></div>
 </body>
 </html>

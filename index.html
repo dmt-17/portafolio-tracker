@@ -452,6 +452,7 @@ const SUPABASE_URL = 'YOUR_PROJECT_URL_HERE';
 const SUPABASE_KEY = 'YOUR_PUBLISHABLE_KEY_HERE';
 const GS_PRICES_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vS_Pe9MX54ftAXFznUqEL_7XxHyDeZ6OA6Rm1i4wkWvtYC0NOWfDWLpLc7ivSPEeUqKM-SyQgOYF1HM/pub?output=csv';
 const TWELVE_DATA_KEY = 'demo';
+const CORS_PROXY = 'https://corsproxy.io/?';
 
 const {createClient} = supabase;
 let db = null, fxRate = 3.75;
@@ -583,37 +584,57 @@ async function fetchPrices() {
 
 async function fetchFromGoogleSheets() {
   try {
-    const r = await fetch(GS_PRICES_URL + '&t=' + Date.now()); 
-    if (!r.ok) return false;
+    const targetUrl = encodeURIComponent(GS_PRICES_URL + '&t=' + Date.now());
+    const r = await fetch(CORS_PROXY + targetUrl); 
+    if (!r.ok) {
+      console.error("Error de red al conectar con Google Sheets");
+      return false;
+    }
     const text = await r.text();
-    const rows = text.trim().split('\n').map(l => l.split(','));
-    if (rows.length < 2) return false;
+    
+    const rows = text.trim().split('\n').map(l => {
+      return l.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(cell => cell.replace(/(^"|"$)/g, '').trim());
+    });
 
-    const hdr = rows[0].map(h => h.trim().toLowerCase().replace(/"/g,''));
+    if (rows.length < 2) {
+      console.warn("El CSV parece estar vacío o solo tiene la cabecera.");
+      return false;
+    }
+
+    const hdr = rows[0].map(h => h.toLowerCase());
     const iT = hdr.indexOf('ticker');
     const iP = hdr.indexOf('price');
     const iC = hdr.indexOf('prev_close');
-    const iG = hdr.indexOf('gf_symbol');
-    if (iT < 0 || iP < 0) return false;
+
+    if (iT < 0 || iP < 0) {
+      console.error("Columnas no encontradas. Encabezados detectados:", hdr);
+      return false;
+    }
 
     let loaded = 0;
     for (let i = 1; i < rows.length; i++) {
-      const row = rows[i].map(v => v.trim().replace(/"/g,''));
-      const ticker = row[iT];
-      const price  = parseFloat(row[iP]);
-      const prev   = iC >= 0 ? parseFloat(row[iC]) : price;
-      if (!ticker || isNaN(price) || price <= 0) continue;
+      const row = rows[i];
+      const ticker = row[iT]?.toUpperCase();
+      
+      let rawPrice = row[iP] ? row[iP].replace(/[^0-9.-]/g, '') : '';
+      let price = parseFloat(rawPrice);
+
+      let rawPrev = (iC >= 0 && row[iC]) ? row[iC].replace(/[^0-9.-]/g, '') : '';
+      let prev = parseFloat(rawPrev);
+
+      if (!ticker || isNaN(price) || price <= 0) {
+        continue;
+      }
 
       if (ticker === 'USD_PEN' && !isNaN(price)) { fxRate = price; continue; }
 
       S.prices[ticker] = { price, prev: isNaN(prev)||prev<=0 ? price : prev, source:'sheets' };
-
-      if (iG >= 0 && row[iG]) S.gfSymbols = S.gfSymbols||{};
-      if (iG >= 0 && row[iG]) S.gfSymbols[ticker] = row[iG];
       loaded++;
     }
+    
     return loaded > 0;
   } catch(e) {
+    console.error("Excepción al procesar Google Sheets:", e);
     return false;
   }
 }
@@ -643,21 +664,27 @@ async function fetchFromTwelveData(tickers) {
 async function fetchBenchmarkHistory() {
   for (const ticker of ['SPY','QQQ']) {
     try {
-      const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=2y`);
+      const targetUrl = encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=2y`);
+      const r = await fetch(CORS_PROXY + targetUrl);
+      
       if (!r.ok) continue;
       const d = await r.json();
       const res = d?.chart?.result?.[0];
       if (!res) continue;
+      
       const timestamps = res.timestamp || [];
       const closes = res.indicators?.quote?.[0]?.close || [];
       if (!S.benchmarks[ticker]) S.benchmarks[ticker] = {};
+      
       timestamps.forEach((ts, i) => {
         if (closes[i]) {
           const date = new Date(ts*1000).toISOString().split('T')[0];
           S.benchmarks[ticker][date] = closes[i];
         }
       });
-    } catch(e) {}
+    } catch(e) {
+      console.error(`Error obteniendo benchmark ${ticker}:`, e);
+    }
   }
 }
 

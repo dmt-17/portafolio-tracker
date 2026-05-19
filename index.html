@@ -678,9 +678,10 @@ async function fetchFromGoogleSheets() {
     }
 
     const hdr = rows[0].map(h => h.toLowerCase());
-    const iT = hdr.indexOf('ticker');
-    const iP = hdr.indexOf('price');
-    const iC = hdr.indexOf('prev_close');
+    const iT  = hdr.indexOf('ticker');
+    const iP  = hdr.indexOf('price');
+    const iC  = hdr.indexOf('prev_close');
+    const iN  = hdr.indexOf('name');
 
     if (iT < 0 || iP < 0) {
       console.error("Columnas no encontradas. Encabezados detectados:", hdr);
@@ -704,7 +705,8 @@ async function fetchFromGoogleSheets() {
 
       if (ticker === 'USD_PEN' && !isNaN(price)) { fxRate = price; continue; }
 
-      S.prices[ticker] = { price, prev: isNaN(prev)||prev<=0 ? price : prev, source:'sheets' };
+      const assetName = (iN >= 0 && row[iN]) ? row[iN].trim() : null;
+      S.prices[ticker] = { price, prev: isNaN(prev)||prev<=0 ? price : prev, source:'sheets', name: assetName };
       loaded++;
     }
     
@@ -905,7 +907,7 @@ function computeMetrics(txs, openArr, closedArr) {
   const roiAnn  = years>0?(Math.pow(1+roi/100,1/years)-1)*100:0;
   const twrrAnn = twrr!=null&&years>0?(Math.pow(1+twrr/100,1/years)-1)*100:null;
   
-  const mwrAnn  = computeMWR(txs, portVal); 
+  const mwrAnn  = computeMWR(txs, portVal);
   const mwrAcc  = mwrAnn != null && years > 0 ? (Math.pow(1 + mwrAnn/100, years) - 1) * 100 : null; 
 
   return { totalInvested, investedPEN, investedUSD, avgFX,
@@ -918,18 +920,34 @@ function computeTWRR() {
   const h = S.portfolioHistory;
   if (h.length < 2) return null;
 
+  // Convention from your Excel:
+  // - portfolio_value_usd = shares × close price (market value, NO cash)
+  // - external_flow_usd on row h[i-1] = deposit/withdrawal at START of period i
+  //   (recorded day before so it's available at open of next trading day)
+  // Formula: R_i = V_end / (V_start + CF_start)
+  // TWRR = product(R_i) - 1
+
   let twrr = 1;
   let validPeriods = 0;
   for (let i = 1; i < h.length; i++) {
     const startVal = +(h[i-1].portfolio_value_usd || 0);
     const endVal   = +(h[i].portfolio_value_usd   || 0);
-    const flow     = +(h[i-1].external_flow_usd   || 0); 
-    if (endVal <= 0) continue;
+    const flow     = +(h[i-1].external_flow_usd   || 0);
+
+    // Skip invalid rows
+    if (startVal <= 0 || endVal <= 0) continue;
+
     const denom = startVal + flow;
-    if (denom > 0.01) {
-      twrr *= endVal / denom;
-      validPeriods++;
-    }
+    // Skip if denominator is near zero (avoid division by zero)
+    if (denom < 0.01) continue;
+
+    // Sanity check: sub-period return should be between -50% and +50%
+    // to filter out data errors (corrupted rows, missing prices)
+    const subReturn = endVal / denom;
+    if (subReturn < 0.5 || subReturn > 1.5) continue;
+
+    twrr *= subReturn;
+    validPeriods++;
   }
   return validPeriods > 0 ? (twrr - 1) * 100 : null;
 }
@@ -1569,7 +1587,8 @@ async function saveTx() {
       const gfSym = document.getElementById('f-gf')?.value?.trim() || ticker;
       const assetClass = document.getElementById('f-new-class').value;
       const sector = document.getElementById('f-new-sector').value;
-      await db.from('assets').insert({ticker, name:ticker, asset_class:assetClass, sector:sector, currency:'USD', gf_symbol:gfSym});
+      const assetNameFromSheet = S.prices[ticker]?.name || ticker;
+      await db.from('assets').insert({ticker, name:assetNameFromSheet, asset_class:assetClass, sector:sector, currency:'USD', gf_symbol:gfSym});
     }
   }
 

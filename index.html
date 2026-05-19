@@ -418,9 +418,15 @@ details strong{color:var(--text)}
       </div>
     </div>
     
-    <div class="input-group hidden" id="f-gf-wrap" style="margin-bottom:14px;">
-      <label style="display:block; font-size:11px; color:var(--text2); margin-bottom:5px;">Google Finance Symbol (New Asset)</label>
-      <input type="text" id="f-gf" placeholder="Ejemplo: NYSE:VOO, BVL:CREDITC1" style="width:100%; background:var(--bg3); border:1px solid var(--border2); padding:9px 12px; color:white; border-radius:var(--r2);"/>
+    <div id="f-new-asset-block" class="hidden" style="background:var(--bg3); padding:1rem; border-radius:var(--r2); border:1px solid var(--border); margin-bottom:1rem;">
+      <div class="form-grid-2">
+        <div class="input-group"><label>Asset Class</label><select id="f-new-class"></select></div>
+        <div class="input-group"><label>Sector</label><select id="f-new-sector"></select></div>
+      </div>
+      <div class="input-group" style="margin-bottom:0">
+        <label>Google Finance Symbol</label>
+        <input type="text" id="f-gf" placeholder="Ej: NYSE:VOO, BVL:CREDITC1" style="width:100%"/>
+      </div>
     </div>
 
     <div class="form-grid-2" id="f-price-row">
@@ -600,12 +606,27 @@ async function loadAll() {
 
   buildBrokerMenu();
   buildBrokerSelects();
+  populateAssetMetadata();
   
   const assetOpts = ['all', ...new Set(S.transactions.map(t=>t.ticker).filter(Boolean))];
   const selectAsset = document.getElementById('tx-asset-filter');
   if(selectAsset) {
     selectAsset.innerHTML = assetOpts.map(a => `<option value="${a}">${a==='all'?'All Assets':a}</option>`).join('');
   }
+}
+
+// Poblador de selectores para Activos
+function populateAssetMetadata() {
+  const classes = [...new Set(S.assets.map(a => a.asset_class).filter(Boolean))];
+  const sectors = [...new Set(S.assets.map(a => a.sector).filter(Boolean))];
+  
+  const classSel = document.getElementById('f-new-class');
+  const sectSel = document.getElementById('f-new-sector');
+  
+  const optHtml = (arr) => arr.map(i => `<option value="${i}">${i}</option>`).join('');
+  
+  if(classSel) classSel.innerHTML = '<option value="Stock">Stock</option><option value="ETF">ETF</option><option value="Crypto">Crypto</option>' + optHtml(classes.filter(c => !['Stock', 'ETF', 'Crypto'].includes(c)));
+  if(sectSel) sectSel.innerHTML = '<option value="Technology">Technology</option><option value="Finance">Finance</option>' + optHtml(sectors.filter(s => !['Technology', 'Finance'].includes(s)));
 }
 
 async function fetchFX() {
@@ -1468,7 +1489,7 @@ function updateFields() {
   const tp = document.getElementById('f-type').value;
   const show = (...ids)=>ids.forEach(id=>{ const el=document.getElementById(id); if(el) el.classList.remove('hidden'); });
   const hide = (...ids)=>ids.forEach(id=>{ const el=document.getElementById(id); if(el) el.classList.add('hidden'); });
-  hide('f-ticker-wrap','f-price-row','f-pen-row','f-xfer-wrap','f-drip-row','f-gf-wrap');
+  hide('f-ticker-wrap','f-price-row','f-pen-row','f-xfer-wrap','f-drip-row','f-new-asset-block');
   show('f-amt-row','f-tax-row');
   if (['Buy','Sell'].includes(tp))                    { show('f-ticker-wrap','f-price-row'); checkNewTicker(); }
   if (['Dividend Cash','Dividend DRIP','Interest'].includes(tp)) { show('f-ticker-wrap'); checkNewTicker(); }
@@ -1494,11 +1515,11 @@ function calcNet() {
 function checkNewTicker() {
   const t = document.getElementById('f-ticker')?.value.toUpperCase().trim();
   const exists = S.assets.find(a => a.ticker === t);
-  const wrap = document.getElementById('f-gf-wrap');
+  const block = document.getElementById('f-new-asset-block');
   const tp = document.getElementById('f-type').value;
   
-  if (t && !exists) { wrap?.classList.remove('hidden'); } 
-  else { wrap?.classList.add('hidden'); }
+  if (t && !exists && tp === 'Buy') { block?.classList.remove('hidden'); } 
+  else { block?.classList.add('hidden'); }
 
   const shareInput = document.getElementById('f-shares');
   if (tp === 'Sell' && t && shareInput) {
@@ -1542,11 +1563,13 @@ async function saveTx() {
   const note=document.getElementById('f-note')?.value?.trim()||null;
   const is_drip=tp==='Dividend DRIP';
 
-  if(ticker){
+  if(ticker && tp === 'Buy'){
     const ex=S.assets.find(a=>a.ticker===ticker);
     if(!ex){
       const gfSym = document.getElementById('f-gf')?.value?.trim() || ticker;
-      await db.from('assets').insert({ticker, name:ticker, asset_class:'Stock', currency:'USD', gf_symbol:gfSym});
+      const assetClass = document.getElementById('f-new-class').value;
+      const sector = document.getElementById('f-new-sector').value;
+      await db.from('assets').insert({ticker, name:ticker, asset_class:assetClass, sector:sector, currency:'USD', gf_symbol:gfSym});
     }
   }
 

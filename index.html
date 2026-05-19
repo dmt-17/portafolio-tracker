@@ -89,6 +89,10 @@ main{flex:1;padding:1.5rem;max-width:1500px;margin:0 auto;width:100%}
 .tbl-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);overflow-x:auto}
 .tbl-wrap::-webkit-scrollbar{height:4px}
 .tbl-wrap::-webkit-scrollbar-thumb{background:var(--border2);border-radius:10px}
+.tm-tooltip{position:fixed;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:10px 14px;font-size:12px;pointer-events:none;z-index:999;display:none;min-width:140px;box-shadow:0 4px 20px rgba(0,0,0,.5)}
+.tm-tooltip .tm-ticker{font-size:15px;font-weight:700;color:var(--text-h);margin-bottom:4px}
+.tm-tooltip .tm-row{display:flex;justify-content:space-between;gap:16px;color:var(--text-s);margin-top:2px}
+.tm-tooltip .tm-val{color:var(--text);font-weight:600}
 table{width:100%;border-collapse:collapse;white-space:nowrap;font-size:13px}
 th{padding:10px 14px;font-size:10px;text-transform:uppercase;color:var(--text-s);border-bottom:1px solid var(--border);letter-spacing:.06em;font-weight:500;text-align:left}
 td{padding:12px 14px;border-bottom:1px solid var(--border);vertical-align:middle}
@@ -153,6 +157,10 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 .close-btn:hover{color:var(--text)}
 .modal::-webkit-scrollbar{width:4px}
 .modal::-webkit-scrollbar-thumb{background:var(--border2);border-radius:10px}
+.tm-tooltip{position:fixed;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:10px 14px;font-size:12px;pointer-events:none;z-index:999;display:none;min-width:140px;box-shadow:0 4px 20px rgba(0,0,0,.5)}
+.tm-tooltip .tm-ticker{font-size:15px;font-weight:700;color:var(--text-h);margin-bottom:4px}
+.tm-tooltip .tm-row{display:flex;justify-content:space-between;gap:16px;color:var(--text-s);margin-top:2px}
+.tm-tooltip .tm-val{color:var(--text);font-weight:600}
 
 /* ── FAB ─────────────────────────────────────────── */
 .fab{position:fixed;bottom:28px;right:24px;width:54px;height:54px;background:var(--primary);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;color:#fff;box-shadow:0 4px 20px rgba(159,122,234,.45);cursor:pointer;z-index:90;border:none;transition:transform .2s}
@@ -190,6 +198,10 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 .bar-fill{height:3px;border-radius:4px;background:var(--primary)}
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:10px}
+.tm-tooltip{position:fixed;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:10px 14px;font-size:12px;pointer-events:none;z-index:999;display:none;min-width:140px;box-shadow:0 4px 20px rgba(0,0,0,.5)}
+.tm-tooltip .tm-ticker{font-size:15px;font-weight:700;color:var(--text-h);margin-bottom:4px}
+.tm-tooltip .tm-row{display:flex;justify-content:space-between;gap:16px;color:var(--text-s);margin-top:2px}
+.tm-tooltip .tm-val{color:var(--text);font-weight:600}
 details summary{cursor:pointer;list-style:none;outline:none;font-size:14px;font-weight:600;color:var(--text-h)}
 details summary::-webkit-details-marker{display:none}
 details p{font-size:13px;color:var(--text-s);margin-top:10px;margin-bottom:6px;line-height:1.7}
@@ -223,7 +235,7 @@ details strong{color:var(--text)}
     </nav>
     <div class="header-right">
       <span class="refresh-badge" id="last-refresh"></span>
-<div class="dropdown">
+      <div class="dropdown">
         <button class="drop-btn" onclick="toggleDrop()" id="broker-btn">All brokers ▾</button>
         <div class="drop-menu" id="broker-menu"></div>
       </div>
@@ -265,11 +277,11 @@ details strong{color:var(--text)}
         </div>
         <div class="card">
           <h2 style="font-size:18px;font-weight:700;color:var(--text-h);margin-bottom:1rem">Security Types</h2>
-          <div style="position:relative;height:180px;display:flex;justify-content:center">
+          <div style="position:relative;height:180px;display:flex;justify-content:center;margin-top:20px">
             <canvas id="pie-chart"></canvas>
           </div>
-          <div class="stacked-bar" id="stacked-bar"></div>
-          <div id="stacked-legend" style="display:flex;gap:12px;margin-top:8px;flex-wrap:wrap"></div>
+          <div class="stacked-bar" id="stacked-bar" style="margin-top:24px"></div>
+          <div id="stacked-legend" style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap"></div>
         </div>
       </div>
     </div>
@@ -284,11 +296,6 @@ details strong{color:var(--text)}
 
     <div class="section" id="s-performance">
       <div class="g4" id="perf-kpis" style="margin-bottom:.75rem"></div>
-      <div style="display:flex;justify-content:flex-end;margin-bottom:.75rem">
-        <button onclick="openRecalcModal()" style="background:rgba(159,122,234,.15);border:1px solid rgba(159,122,234,.4);color:#c4b5fd;padding:7px 16px;border-radius:8px;font-size:13px;cursor:pointer;font-weight:500">
-          🔄 Recalculate history from date…
-        </button>
-      </div>
       <div class="card" style="padding:0;margin-bottom:.75rem">
         <div style="padding:1.25rem 1.25rem 0;height:320px;position:relative">
           <canvas id="perf-chart"></canvas>
@@ -819,9 +826,7 @@ function computeMetrics(txs, openArr, closedArr) {
   const totalDivs   = fdiv().filter(d=>!d.is_drip).reduce((s,d)=>s+(+(d.amount_usd||0)),0);
   const totalDRIP   = fdiv().filter(d=>d.is_drip).reduce((s,d)=>s+(+(d.amount_usd||0)),0);
 
-  // ROI = (current market value of portfolio - total deposited) / total deposited
-  // portVal = live market value when prices available, else cost basis
-  const roi = totalInvested > 0 ? (portVal - totalInvested) / totalInvested * 100 : 0;
+  const roi = totalInvested>0?(portVal-totalInvested)/totalInvested*100:0;
 
   const twrr = S.broker==='all'?computeTWRR():null;
   const firstDeposit = deposits.sort((a,b)=>a.date.localeCompare(b.date))[0];
@@ -829,8 +834,8 @@ function computeMetrics(txs, openArr, closedArr) {
   const roiAnn  = years>0?(Math.pow(1+roi/100,1/years)-1)*100:0;
   const twrrAnn = twrr!=null&&years>0?(Math.pow(1+twrr/100,1/years)-1)*100:null;
   
-  const mwrAnn  = computeMWR(txs, portVal);  // already annualized %
-  const mwrAcc  = mwrAnn != null && years > 0 ? (Math.pow(1 + mwrAnn/100, years) - 1) * 100 : null;
+  const mwrAnn  = computeMWR(txs, portVal); 
+  const mwrAcc  = mwrAnn != null && years > 0 ? (Math.pow(1 + mwrAnn/100, years) - 1) * 100 : null; 
 
   return { totalInvested, investedPEN, investedUSD, avgFX,
     totalFees, totalTaxes, totalInt, mktValue, costBasis, portVal,
@@ -842,35 +847,24 @@ function computeTWRR() {
   const h = S.portfolioHistory;
   if (h.length < 2) return null;
 
-  // Build external flow map from real transactions (Deposits/Withdrawals only)
-  // These represent NEW money entering or leaving — not internal moves
-  const flowByDate = {};
-  for (const t of S.transactions) {
-    const d = t.date;
-    if (t.type === 'Deposit') {
-      flowByDate[d] = (flowByDate[d]||0) + Math.abs(+(t.amount_usd||0));
-    } else if (t.type === 'Withdrawal') {
-      flowByDate[d] = (flowByDate[d]||0) - Math.abs(+(t.amount_usd||0));
-    }
-  }
+  // Your Excel convention:
+  // - portfolio_value_usd = shares × close price (market value only, no cash)
+  // - external_flow_usd is recorded on day BEFORE the deposit
+  //   (day 13 if money arrived day 14, so it's available at START of next period)
+  // Formula: R_i = end_val / (start_val + flow_on_start_date)
+  // where flow_on_start_date = external_flow_usd of h[i-1]
 
-  // TWRR standard formula:
-  // The portfolio_value_usd recorded at EOD already INCLUDES any deposit made that day.
-  // So the sub-period return for day i is:
-  //   R_i = (end_val - CF_i) / start_val
-  // where CF_i = cash flow that arrived on date i (already in end_val)
-  // This isolates pure investment performance from capital additions.
   let twrr = 1;
   let validPeriods = 0;
   for (let i = 1; i < h.length; i++) {
-    const startVal = +(h[i-1].portfolio_value_usd||0);
-    const endVal   = +(h[i].portfolio_value_usd||0);
-    const flow     = flowByDate[h[i].date] || 0;
-    if (startVal <= 0) continue;
-    // Subtract flow from end value to isolate market return
-    const adjEnd = endVal - flow;
-    if (adjEnd > 0) {
-      twrr *= adjEnd / startVal;
+    const startVal = +(h[i-1].portfolio_value_usd || 0);
+    const endVal   = +(h[i].portfolio_value_usd   || 0);
+    // Flow recorded on the START row (day before deposit hits portfolio)
+    const flow     = +(h[i-1].external_flow_usd   || 0);
+    if (endVal <= 0) continue;
+    const denom = startVal + flow;
+    if (denom > 0.01) {
+      twrr *= endVal / denom;
       validPeriods++;
     }
   }
@@ -878,41 +872,40 @@ function computeTWRR() {
 }
 
 function computeMWR(txs, finalVal) {
-  // IRR / Money-Weighted Return
-  // Cash flows: deposits are negative (money out of pocket), withdrawals positive,
-  // final portfolio value is positive cash flow at time 0 (today)
+  // IRR: finds r such that NPV of all cash flows = 0
+  // Deposits = negative flows (money leaves your pocket)
+  // Withdrawals = positive flows (money returns to pocket)
+  // finalVal = current portfolio market value (positive, received "today")
   const flows = [];
   const now = new Date();
-
   for (const t of txs) {
-    const yrs = (now - new Date(t.date)) / (365.25 * 86400000);
-    if (yrs < 0) continue; // skip future-dated transactions
+    const d = new Date(t.date);
+    const yrs = (now - d) / (365.25 * 86400000);
+    if (yrs < 0) continue;
     if (t.type === 'Deposit') {
-      flows.push({ t: yrs, cf: -Math.abs(+(t.amount_usd||0)) }); // cash out of pocket
+      flows.push({ t: yrs, cf: -Math.abs(+(t.amount_usd||0)) });
     } else if (t.type === 'Withdrawal') {
-      flows.push({ t: yrs, cf: +Math.abs(+(t.amount_usd||0)) }); // cash back to pocket
+      flows.push({ t: yrs, cf: +Math.abs(+(t.amount_usd||0)) });
     }
   }
-
   if (!flows.length || finalVal <= 0) return null;
-  flows.push({ t: 0, cf: finalVal }); // current portfolio value = final positive CF
+  flows.push({ t: 0, cf: finalVal });
 
-  // Newton-Raphson to solve NPV = 0 for r (annual rate)
-  let r = 0.1;
-  for (let i = 0; i < 100; i++) {
+  // Newton-Raphson
+  let r = 0.08; // start near typical equity return
+  for (let iter = 0; iter < 200; iter++) {
     let npv = 0, dnpv = 0;
     for (const f of flows) {
-      const pv = f.cf * Math.pow(1 + r, -f.t);
-      npv  += pv;
-      dnpv -= f.t * pv / (1 + r);
+      const disc = Math.pow(1 + r, -f.t);
+      npv  += f.cf * disc;
+      dnpv -= f.t * f.cf * disc / (1 + r);
     }
     if (Math.abs(dnpv) < 1e-12) break;
     const nr = r - npv / dnpv;
     if (Math.abs(nr - r) < 1e-9) { r = nr; break; }
-    r = Math.max(-0.99, Math.min(nr, 50)); // clamp to avoid divergence
+    r = Math.max(-0.95, Math.min(nr, 10)); // clamp: -95% to +1000%
   }
-  // Return as percentage; r is already annual rate from Newton-Raphson on yearly intervals
-  return (r > -1 && r < 50) ? r * 100 : null;
+  return (r > -0.95 && r < 10) ? r * 100 : null; // return as %
 }
 
 function daysBetween(a,b){return Math.round((new Date(b)-new Date(a))/86400000);}
@@ -1673,87 +1666,32 @@ async function updateTx() {
 }
 
 
-
-// ── RECALCULATE PORTFOLIO HISTORY ──────────────────
-function openRecalcModal() {
-  document.getElementById('modal-recalc').classList.add('show');
-  document.getElementById('recalc-alert').innerHTML = '';
-  document.getElementById('recalc-progress').style.display = 'none';
-  document.getElementById('recalc-from').value = S.portfolioHistory[0]?.date || today();
+// ── TREEMAP TOOLTIP ────────────────────────────────
+function showTmTip(e, dataStr) {
+  const d = JSON.parse(dataStr);
+  const t = document.getElementById('tm-tooltip');
+  const pnlCol = d.unr >= 0 ? 'var(--success)' : 'var(--error)';
+  t.innerHTML = `
+    <div class="tm-ticker">${d.ticker}</div>
+    <div class="tm-row"><span>Value</span><span class="tm-val">$${parseFloat(d.val).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span></div>
+    <div class="tm-row"><span>Weight</span><span class="tm-val">${d.pct}%</span></div>
+    <div class="tm-row"><span>Shares</span><span class="tm-val">${parseFloat(d.shares).toFixed(4)}</span></div>
+    <div class="tm-row"><span>Avg cost</span><span class="tm-val">$${parseFloat(d.avgCost).toFixed(2)}</span></div>
+    <div class="tm-row"><span>Unr. P/L</span><span style="color:${pnlCol};font-weight:600">${d.unr>=0?'+':''}$${Math.abs(parseFloat(d.unr)).toFixed(2)} (${parseFloat(d.unrPct).toFixed(2)}%)</span></div>
+    <div class="tm-row"><span>Sector</span><span class="tm-val">${d.sector}</span></div>`;
+  t.style.display = 'block';
+  moveTmTip(e);
 }
-
-async function runRecalculate() {
-  const fromDate = document.getElementById('recalc-from').value;
-  if (!fromDate) {
-    document.getElementById('recalc-alert').innerHTML = '<div class="alert alert-e">Please select a start date.</div>';
-    return;
-  }
-
-  document.getElementById('recalc-btn').disabled = true;
-  document.getElementById('recalc-progress').style.display = 'block';
-
-  // Filter history rows from that date onwards
-  const rows = S.portfolioHistory.filter(h => h.date >= fromDate);
-  if (!rows.length) {
-    document.getElementById('recalc-alert').innerHTML = '<div class="alert alert-e">No history rows found from that date.</div>';
-    document.getElementById('recalc-btn').disabled = false;
-    return;
-  }
-
-  // Build daily invested total and flow from transactions
-  const allTxs = S.transactions;
-
-  // Pre-compute cumulative invested up to each date
-  const deposits = allTxs.filter(t => t.type === 'Deposit').sort((a,b) => a.date.localeCompare(b.date));
-  const withdrawals = allTxs.filter(t => t.type === 'Withdrawal').sort((a,b) => a.date.localeCompare(b.date));
-
-  function investedUpTo(date) {
-    const dep = deposits.filter(t => t.date <= date).reduce((s,t) => s + Math.abs(+(t.amount_usd||0)), 0);
-    const wit = withdrawals.filter(t => t.date <= date).reduce((s,t) => s + Math.abs(+(t.amount_usd||0)), 0);
-    return dep - wit;
-  }
-
-  function flowOnDate(date) {
-    const dep = deposits.filter(t => t.date === date).reduce((s,t) => s + Math.abs(+(t.amount_usd||0)), 0);
-    const wit = withdrawals.filter(t => t.date === date).reduce((s,t) => s + Math.abs(+(t.amount_usd||0)), 0);
-    return dep - wit;
-  }
-
-  let errors = 0;
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const pct = Math.round((i + 1) / rows.length * 100);
-    document.getElementById('recalc-bar').style.width = pct + '%';
-    document.getElementById('recalc-status').textContent = `Processing ${row.date}… (${i+1}/${rows.length})`;
-
-    const newInvested = parseFloat(investedUpTo(row.date).toFixed(2));
-    const newFlow     = parseFloat(flowOnDate(row.date).toFixed(2));
-
-    const { error } = await db.from('portfolio_history')
-      .update({
-        total_invested_usd:  newInvested,
-        external_flow_usd:   newFlow,
-      })
-      .eq('id', row.id);
-
-    if (error) errors++;
-    // Small delay to avoid overwhelming Supabase
-    if (i % 10 === 0) await new Promise(r => setTimeout(r, 50));
-  }
-
-  // Reload history
-  const hR = await db.from('portfolio_history').select('*').order('date', { ascending: true });
-  S.portfolioHistory = hR.data || [];
-
-  document.getElementById('recalc-btn').disabled = false;
-  document.getElementById('recalc-status').textContent = `Done! ${rows.length - errors} rows updated${errors ? ', ' + errors + ' errors' : ''}.`;
-  document.getElementById('recalc-bar').style.width = '100%';
-  document.getElementById('recalc-bar').style.background = errors ? 'var(--error)' : 'var(--success)';
-
-  setTimeout(() => {
-    closeModal('modal-recalc');
-    renderAll();
-  }, 1500);
+function moveTmTip(e) {
+  const t = document.getElementById('tm-tooltip');
+  const x = e.clientX + 14, y = e.clientY - 10;
+  const maxX = window.innerWidth - t.offsetWidth - 10;
+  const maxY = window.innerHeight - t.offsetHeight - 10;
+  t.style.left = Math.min(x, maxX) + 'px';
+  t.style.top  = Math.min(y, maxY) + 'px';
+}
+function hideTmTip() {
+  document.getElementById('tm-tooltip').style.display = 'none';
 }
 
 init();
@@ -1781,35 +1719,6 @@ init();
   </div>
 </div>
 
-
-<!-- RECALCULATE HISTORY MODAL -->
-<div class="overlay" id="modal-recalc">
-  <div class="modal" style="max-width:420px">
-    <div class="modal-header">
-      <h2>Recalculate History</h2>
-      <button class="close-btn" onclick="closeModal('modal-recalc')">✕</button>
-    </div>
-    <p style="font-size:13px;color:var(--text-s);margin-bottom:1.25rem;line-height:1.6">
-      This will update <strong>portfolio_value_usd</strong>, <strong>total_invested_usd</strong> and <strong>external_flow_usd</strong> for every day from the selected date onwards, using your transaction history.<br><br>
-      Use this after editing or adding past transactions.
-    </p>
-    <div id="recalc-alert"></div>
-    <div class="input-group">
-      <label>Recalculate from date</label>
-      <input type="date" id="recalc-from"/>
-    </div>
-    <div id="recalc-progress" style="display:none;margin-bottom:1rem">
-      <div style="font-size:12px;color:var(--text-s);margin-bottom:6px" id="recalc-status">Processing…</div>
-      <div style="height:4px;background:var(--bg4);border-radius:4px">
-        <div id="recalc-bar" style="height:4px;background:var(--primary);border-radius:4px;width:0%;transition:width .3s"></div>
-      </div>
-    </div>
-    <div class="btn-row">
-      <button class="btn-s" onclick="closeModal('modal-recalc')">Cancel</button>
-      <button class="btn-p" id="recalc-btn" onclick="runRecalculate()">Recalculate</button>
-    </div>
-  </div>
-</div>
-
+<div class="tm-tooltip" id="tm-tooltip"></div>
 </body>
 </html>

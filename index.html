@@ -685,9 +685,6 @@ async function fetchFromGoogleSheets() {
     const iG  = hdr.indexOf('gf_symbol');
     const iN  = hdr.indexOf('name');
 
-    console.log('[Sheets] Headers:', hdr);
-    console.log('[Sheets] ticker='+iT+' price='+iP+' prev_close='+iC+' gf_symbol='+iG+' name='+iN);
-
     if (iT < 0 || iP < 0) {
       console.error('Sheets columns not found. Headers:', hdr);
       return false;
@@ -916,7 +913,6 @@ function computeMetrics(txs, openArr, closedArr) {
   const roiAnn  = years>0?(Math.pow(1+roi/100,1/years)-1)*100:0;
   const twrrAnn = twrr!=null&&years>0?(Math.pow(1+twrr/100,1/years)-1)*100:null;
   
-  // MWR needs total value (assets + cash), not just market value of assets
   const lastHistRow = S.portfolioHistory[S.portfolioHistory.length - 1];
   const totalValForMWR = +(lastHistRow?.total_value || 0) || portVal;
   const mwrAnn  = computeMWR(txs, totalValForMWR);
@@ -937,10 +933,6 @@ function computeTWRRAndMDD() {
   let peak = 1;
   let maxDD = 0;
 
-  // Use total_value (cash + assets) for TWRR — this is the correct base
-  // portfolio_value_usd is only market value of assets, ignoring cash
-  // total_value = portfolio_value_usd + cash_usd
-
   for (let i = 1; i < h.length; i++) {
     const startVal = +(h[i-1].total_value || h[i-1].portfolio_value_usd || 0);
     const endVal   = +(h[i].total_value   || h[i].portfolio_value_usd   || 0);
@@ -948,19 +940,17 @@ function computeTWRRAndMDD() {
 
     if (startVal <= 0 || endVal <= 0) continue;
 
-    // Subperiod factor = (Total Value today - External Flow) / Total Value yesterday
+    // Fórmula requerida: Subperiod factor = (Total Value hoy - External Flow) / Total Value ayer
     const subReturn = (endVal - flow) / startVal;
 
     if (subReturn <= 0 || subReturn > 3.0) {
-      console.warn('[TWRR] Bad sub-period', h[i].date,
-        'start:', startVal.toFixed(2), 'end:', endVal.toFixed(2),
-        'flow:', flow.toFixed(2), 'factor:', subReturn.toFixed(4));
       continue;
     }
 
     twrr *= subReturn;
     validPeriods++;
 
+    // Cálculo del Maximum Drawdown (MDD)
     if (twrr > peak) peak = twrr;
     const dd = (twrr - peak) / peak;
     if (dd < maxDD) maxDD = dd;
@@ -973,49 +963,49 @@ function computeTWRRAndMDD() {
 }
 
 function computeMWR(txs, finalVal) {
-  // Option A: Use portfolio_history external_flow_usd as cash flows
-  // This is more reliable than reconstructing from transactions
-  // because external_flow already captures deposits/withdrawals correctly.
   const h = S.portfolioHistory;
   if (!h.length || finalVal <= 0) return null;
 
-  const now = new Date();
+  // FIJAR LA FECHA DEL SISTEMA: Anclamos 'now' estrictamente a la última fecha del historial
+  // para evitar desfases causados por el reloj local y tiempos negativos
+  const lastHistRow = h[h.length - 1];
+  const now = new Date(lastHistRow.date + 'T00:00:00');
+  
   const flows = [];
 
-  // Use external flows from portfolio history
-  // Validate against total_value (not portfolio_value_usd which excludes cash)
   for (const row of h) {
-    const flow    = +(row.external_flow_usd || 0);
-    const totalV  = +(row.total_value || row.portfolio_value_usd || 0);
+    const flow = +(row.external_flow_usd || 0);
     if (Math.abs(flow) < 0.01) continue;
-    // Skip if flow > total_value (genuinely impossible — data error)
-    if (totalV > 0 && flow > totalV * 1.1) {
-      console.warn('[MWR] Skipping bad flow on', row.date, 'flow:', flow, 'totalVal:', totalV);
-      continue;
-    }
-    const yrs = (now - new Date(row.date)) / (365.25 * 86400000);
-    if (yrs < 0) continue;
-    flows.push({ t: yrs, cf: -flow });
+    
+    // T00:00:00 garantiza que se calcule a medianoche exacta, evitando saltos de zona horaria
+    const rowDate = new Date(row.date + 'T00:00:00');
+    const yrs = (now - rowDate) / (365.25 * 86400000);
+    
+    flows.push({ t: Math.max(0, yrs), cf: -flow });
   }
 
+  // Fallback a tabla transactions si no hubieran flujos en portfolio_history
   if (!flows.length) {
-    // Fallback: use transactions if no flows in history
     for (const t of txs) {
-      const yrs = (now - new Date(t.date)) / (365.25 * 86400000);
-      if (yrs < 0) continue;
-      const amt = Math.abs(+(t.amount_usd || 0));
-      if (t.type === 'Deposit')    flows.push({ t: yrs, cf: -amt });
-      else if (t.type === 'Withdrawal') flows.push({ t: yrs, cf: +amt });
+      const amt = Math.abs(+(t.net_amount_usd || t.amount_usd || 0));
+      if (!amt) continue;
+      
+      const tDate = new Date(t.date + 'T00:00:00');
+      const yrs = (now - tDate) / (365.25 * 86400000);
+      const t_yrs = Math.max(0, yrs);
+      
+      if (t.type === 'Deposit')    flows.push({ t: t_yrs, cf: -amt });
+      else if (t.type === 'Withdrawal') flows.push({ t: t_yrs, cf: +amt });
     }
   }
 
   if (!flows.length) return null;
-  // finalVal should be total portfolio value (assets + cash)
-  const lastRow = h[h.length - 1];
-  const actualFinal = +(lastRow?.total_value || lastRow?.portfolio_value_usd || 0) || finalVal;
-  flows.push({ t: 0, cf: actualFinal }); // current value = final positive CF
+  
+  // El CF final es positivo (representa el valor actual que puedes extraer)
+  const actualFinal = +(lastHistRow?.total_value || lastHistRow?.portfolio_value_usd || 0) || finalVal;
+  flows.push({ t: 0, cf: actualFinal }); 
 
-  // Newton-Raphson to solve for IRR (annualized)
+  // Aproximación iterativa de Newton-Raphson
   let r = 0.08;
   for (let iter = 0; iter < 200; iter++) {
     let npv = 0, dnpv = 0;

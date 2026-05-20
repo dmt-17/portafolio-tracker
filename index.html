@@ -309,7 +309,8 @@ details strong{color:var(--text)}
         <summary>▼ Metrics explained</summary>
         <p><strong>TWRR</strong> — Time-Weighted Return. Eliminates the effect of deposit timing. The correct metric to compare against S&P 500 or NASDAQ.</p>
         <p><strong>ROI</strong> — Return on Investment. Total gain over capital deposited. Affected by deposit timing.</p>
-        <p><strong>MWR / IRR</strong> — Money-Weighted Return. Penalizes depositing large amounts before a downturn. Reflects real-world impact. MWR Accumulated is mathematically represented by your ROI, but here we calculate it directly from the IRR formula for clarity.</p>
+        <p><strong>MWR / IRR</strong> — Money-Weighted Return. Penalizes depositing large amounts before a downturn. Reflects real-world impact.</p>
+        <p><strong>MDD (Maximum Drawdown)</strong> — La mayor caída histórica desde un pico hasta el punto más bajo. Mide el riesgo máximo que ha sufrido tu cartera.</p>
         <p><strong>Annualized</strong> — Converts cumulative return to a yearly rate: (1+r)^(1/years)−1.</p>
         <p><strong>Alpha</strong> — Your TWRR minus the benchmark (SPY or QQQ). Positive = you are beating the market.</p>
       </details>
@@ -901,55 +902,58 @@ function computeMetrics(txs, openArr, closedArr) {
 
   const roi = totalInvested>0?(portVal-totalInvested)/totalInvested*100:0;
 
-  const twrr = S.broker==='all'?computeTWRR():null;
+  const twrrData = S.broker==='all' ? computeTWRRAndMDD() : {twrr: null, mdd: null};
+  const twrr = twrrData.twrr;
+  const mdd = twrrData.mdd;
+
   const firstDeposit = deposits.sort((a,b)=>a.date.localeCompare(b.date))[0];
   const years = firstDeposit?(Date.now()-new Date(firstDeposit.date))/(365.25*86400000):1;
   const roiAnn  = years>0?(Math.pow(1+roi/100,1/years)-1)*100:0;
   const twrrAnn = twrr!=null&&years>0?(Math.pow(1+twrr/100,1/years)-1)*100:null;
   
   const mwrAnn  = computeMWR(txs, portVal);
-  const mwrAcc  = mwrAnn != null && years > 0 ? (Math.pow(1 + mwrAnn/100, years) - 1) * 100 : null; 
 
   return { totalInvested, investedPEN, investedUSD, avgFX,
     totalFees, totalTaxes, totalInt, mktValue, costBasis, portVal,
     realPnl, unrPnl, dailyPnl, totalCash, cashMap: cashMap_global, totalDivs, totalDRIP,
-    roi, roiAnn, twrr, twrrAnn, mwrAnn, mwrAcc, years };
+    roi, roiAnn, twrr, twrrAnn, mwrAnn, mdd, years };
 }
 
-function computeTWRR() {
+function computeTWRRAndMDD() {
   const h = S.portfolioHistory;
-  if (h.length < 2) return null;
-
-  // Convention from your Excel:
-  // - portfolio_value_usd = shares × close price (market value, NO cash)
-  // - external_flow_usd on row h[i-1] = deposit/withdrawal at START of period i
-  //   (recorded day before so it's available at open of next trading day)
-  // Formula: R_i = V_end / (V_start + CF_start)
-  // TWRR = product(R_i) - 1
+  if (h.length < 2) return {twrr: null, mdd: null};
 
   let twrr = 1;
   let validPeriods = 0;
+  
+  let peak = 1;
+  let maxDD = 0;
+
   for (let i = 1; i < h.length; i++) {
     const startVal = +(h[i-1].portfolio_value_usd || 0);
     const endVal   = +(h[i].portfolio_value_usd   || 0);
-    const flow     = +(h[i-1].external_flow_usd   || 0);
+    const flow     = +(h[i].external_flow_usd     || 0);
 
-    // Skip invalid rows
-    if (startVal <= 0 || endVal <= 0) continue;
+    if (startVal <= 0) continue;
 
-    const denom = startVal + flow;
-    // Skip if denominator is near zero (avoid division by zero)
-    if (denom < 0.01) continue;
-
-    // Sanity check: sub-period return should be between -50% and +50%
-    // to filter out data errors (corrupted rows, missing prices)
-    const subReturn = endVal / denom;
-    if (subReturn < 0.5 || subReturn > 1.5) continue;
+    // Fórmula: Subperiod factor = (Total Value hoy - External Flow) / Total Value ayer
+    const subReturn = (endVal - flow) / startVal;
+    
+    // Sanity check para ignorar anomalías graves de data
+    if (subReturn < 0.2 || subReturn > 5.0) continue;
 
     twrr *= subReturn;
     validPeriods++;
+
+    if (twrr > peak) peak = twrr;
+    const dd = (twrr - peak) / peak;
+    if (dd < maxDD) maxDD = dd;
   }
-  return validPeriods > 0 ? (twrr - 1) * 100 : null;
+  
+  return {
+    twrr: validPeriods > 0 ? (twrr - 1) * 100 : null,
+    mdd: validPeriods > 0 ? maxDD * 100 : null
+  };
 }
 
 function computeMWR(txs, finalVal) {
@@ -959,10 +963,14 @@ function computeMWR(txs, finalVal) {
     const d = new Date(t.date);
     const yrs = (now - d) / (365.25 * 86400000);
     if (yrs < 0) continue;
+    
+    // CORRECCIÓN MWR: Priorizar net_amount_usd para considerar las fees correctas
+    const amt = Math.abs(+(t.net_amount_usd || t.amount_usd || 0));
+    
     if (t.type === 'Deposit') {
-      flows.push({ t: yrs, cf: -Math.abs(+(t.amount_usd||0)) }); 
+      flows.push({ t: yrs, cf: -amt }); 
     } else if (t.type === 'Withdrawal') {
-      flows.push({ t: yrs, cf: +Math.abs(+(t.amount_usd||0)) }); 
+      flows.push({ t: yrs, cf: +amt }); 
     }
   }
   if (!flows.length || finalVal <= 0) return null;
@@ -1309,7 +1317,7 @@ function renderPerformance(m) {
     ['TWRR Annualized',  m.twrrAnn, 'Time-weighted ann.'],
     ['ROI Accumulated',  m.roi,     'Total P&L % on Capital'],
     ['ROI Annualized',   m.roiAnn,  'Return ann.'],
-    ['MWR / IRR Accumulated', m.mwrAcc, 'Money-weighted abs.'],
+    ['Maximum Drawdown (MDD)', m.mdd, 'Max drop from peak'],
     ['MWR / IRR Ann.',   m.mwrAnn,  'Money-weighted ann.'],
     ['Realized P&L',     m.realPnl, 'Closed positions net'],
     ['Alpha vs SPY',     alpha,     alpha!=null?(alpha>=0?'Beating market ↑':'Below benchmark ↓'):'Benchmark loading…'],

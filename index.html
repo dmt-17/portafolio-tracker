@@ -512,8 +512,8 @@ details strong{color:var(--text)}
 // ============================================================
 const SUPABASE_URL = 'YOUR_PROJECT_URL_HERE';
 const SUPABASE_KEY = 'YOUR_PUBLISHABLE_KEY_HERE';
-const GS_PRICES_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vS_Pe9MX54ftAXFznUqEL_7XxHyDeZ6OA6Rm1i4wkWvtYC0NOWfDWLpLc7ivSPEeUqKM-SyQgOYF1HM/pub?output=csv';
-const TWELVE_DATA_KEY = 'demo';
+const GS_PRICES_URL = 'https://script.google.com/macros/s/AKfycbwdGZyaKnBrXitdZpLWZ2hHka8RBfTGZPAPjB-XDUpw_mCVTc5NmyfU6Fnkg-F3VORzvA/exec';
+const TWELVE_DATA_KEY = '8a49d31da45745028474d7b58cb0dbfb';
 const CORS_PROXY = 'https://corsproxy.io/?';
 
 const {createClient} = supabase;
@@ -661,61 +661,49 @@ async function fetchPrices() {
 
 async function fetchFromGoogleSheets() {
   try {
-    const targetUrl = encodeURIComponent(GS_PRICES_URL + '&t=' + Date.now());
-    const r = await fetch(CORS_PROXY + targetUrl); 
-    if (!r.ok) {
-      console.error("Error de red al conectar con Google Sheets");
-      return false;
-    }
-    const text = await r.text();
+    // Al usar Apps Script, Google siempre devuelve la data en vivo
+    const targetUrl = GS_PRICES_URL + '?t=' + Date.now(); 
+    const r = await fetch(targetUrl); 
+    if (!r.ok) return false;
     
-    const rows = text.trim().split('\n').map(l => {
-      return l.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(cell => cell.replace(/(^"|"$)/g, '').trim());
-    });
+    const rows = await r.json(); // Ahora recibimos un Array limpio y estructurado
 
-    if (rows.length < 2) {
-      console.warn("El CSV parece estar vacío o solo tiene la cabecera.");
-      return false;
-    }
+    if (!rows || rows.length < 2) return false;
 
-    const hdr = rows[0].map(h => h.trim().toLowerCase().replace(/"/g,''));
+    const hdr = rows[0].map(h => String(h).trim().toLowerCase());
     const iT  = hdr.indexOf('ticker');
     const iP  = hdr.indexOf('price');
     const iC  = hdr.indexOf('prev_close');
     const iG  = hdr.indexOf('gf_symbol');
     const iN  = hdr.indexOf('name');
 
-    if (iT < 0 || iP < 0) {
-      console.error('Sheets columns not found. Headers:', hdr);
-      return false;
-    }
+    if (iT < 0 || iP < 0) return false;
 
     let loaded = 0;
     for (let i = 1; i < rows.length; i++) {
       const row = rows[i];
-      const ticker = row[iT]?.toUpperCase();
+      const ticker = row[iT] ? String(row[iT]).toUpperCase().trim() : null;
       
-      let rawPrice = row[iP] ? row[iP].replace(/[^0-9.-]/g, '') : '';
+      let rawPrice = String(row[iP] || '').replace(/[^0-9.-]/g, '');
       let price = parseFloat(rawPrice);
 
-      let rawPrev = (iC >= 0 && row[iC]) ? row[iC].replace(/[^0-9.-]/g, '') : '';
+      let rawPrev = (iC >= 0 && row[iC]) ? String(row[iC]).replace(/[^0-9.-]/g, '') : '';
       let prev = parseFloat(rawPrev);
 
-      if (!ticker || isNaN(price) || price <= 0) {
-        continue;
-      }
+      if (!ticker || isNaN(price) || price <= 0) continue;
 
       if (ticker === 'USD_PEN' && !isNaN(price)) { fxRate = price; continue; }
 
-      const assetName = (iN >= 0 && row[iN]) ? row[iN].trim().replace(/"/g,'') : null;
-      const gfSymbol  = (iG >= 0 && row[iG]) ? row[iG].trim().replace(/"/g,'') : null;
+      const assetName = (iN >= 0 && row[iN]) ? String(row[iN]).trim() : null;
+      const gfSymbol  = (iG >= 0 && row[iG]) ? String(row[iG]).trim() : null;
+      
       S.prices[ticker] = { price, prev: isNaN(prev)||prev<=0 ? price : prev, source:'sheets', name: assetName, gfSymbol };
       loaded++;
     }
     
     return loaded > 0;
   } catch(e) {
-    console.error("Excepción al procesar Google Sheets:", e);
+    console.error("Excepción al procesar Google Sheets API:", e);
     return false;
   }
 }
@@ -1415,7 +1403,7 @@ function renderPerfChart() {
       datasets:[
         { label:'TWRR%', data:twrrData, borderColor:'#9f7aea', borderWidth:2, tension:.3, pointRadius:0, spanGaps:true },
         { label:'ROI%',  data:roiData,  borderColor:'#34d399', borderWidth:2, tension:.3, pointRadius:0, spanGaps:true },
-        { label:'SPY',   data:spyData,  borderColor:'#718096', borderWidth:1.5, borderDash:[5,4], tension:.3, pointRadius:0, spanGaps:true },
+        { label:'SPY',   data:spyData,  borderColor:'##E6C15A', borderWidth:1.5, borderDash:[5,4], tension:.3, pointRadius:0, spanGaps:true },
         { label:'QQQ',   data:qqqData,  borderColor:'#4DA3FF', borderWidth:1.5, borderDash:[3,3], tension:.3, pointRadius:0, spanGaps:true },
       ]
     },

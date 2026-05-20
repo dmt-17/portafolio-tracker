@@ -934,26 +934,30 @@ function computeTWRRAndMDD() {
   let peak = 1;
   let maxDD = 0;
 
+  // Use total_value (cash + assets) for TWRR — this is the correct base
+  // portfolio_value_usd is only market value of assets, ignoring cash
+  // total_value = portfolio_value_usd + cash_usd
+
   for (let i = 1; i < h.length; i++) {
-    const startVal = +(h[i-1].portfolio_value_usd || 0);
-    const endVal   = +(h[i].portfolio_value_usd   || 0);
-    // external_flow_usd is on the SAME day row (confirmed convention)
-    const flow     = +(h[i].external_flow_usd     || 0);
+    const startVal = +(h[i-1].total_value || h[i-1].portfolio_value_usd || 0);
+    const endVal   = +(h[i].total_value   || h[i].portfolio_value_usd   || 0);
+    const flow     = +(h[i].external_flow_usd || 0);
 
     if (startVal <= 0 || endVal <= 0) continue;
 
     // Subperiod factor = (Total Value today - External Flow) / Total Value yesterday
-    // This removes the effect of new capital injections from the return calculation
     const subReturn = (endVal - flow) / startVal;
 
-    // Only skip truly impossible values (negative portfolio or >500% daily gain)
-    // Don't filter large positive moves — deposits can cause endVal >> startVal
-    if (subReturn <= 0 || subReturn > 6.0) continue;
+    if (subReturn <= 0 || subReturn > 3.0) {
+      console.warn('[TWRR] Bad sub-period', h[i].date,
+        'start:', startVal.toFixed(2), 'end:', endVal.toFixed(2),
+        'flow:', flow.toFixed(2), 'factor:', subReturn.toFixed(4));
+      continue;
+    }
 
     twrr *= subReturn;
     validPeriods++;
 
-    // Max drawdown tracks the running TWRR curve
     if (twrr > peak) peak = twrr;
     const dd = (twrr - peak) / peak;
     if (dd < maxDD) maxDD = dd;
@@ -975,15 +979,20 @@ function computeMWR(txs, finalVal) {
   const now = new Date();
   const flows = [];
 
-  // Each external flow in history is a cash outflow from investor's perspective
+  // Use external flows from portfolio history
+  // Validate against total_value (not portfolio_value_usd which excludes cash)
   for (const row of h) {
-    const flow = +(row.external_flow_usd || 0);
-    if (Math.abs(flow) < 0.01) continue; // skip zero-flow days
+    const flow    = +(row.external_flow_usd || 0);
+    const totalV  = +(row.total_value || row.portfolio_value_usd || 0);
+    if (Math.abs(flow) < 0.01) continue;
+    // Skip if flow > total_value (genuinely impossible — data error)
+    if (totalV > 0 && flow > totalV * 1.1) {
+      console.warn('[MWR] Skipping bad flow on', row.date, 'flow:', flow, 'totalVal:', totalV);
+      continue;
+    }
     const yrs = (now - new Date(row.date)) / (365.25 * 86400000);
     if (yrs < 0) continue;
-    // Deposit = negative CF (money left investor's pocket)
-    // Withdrawal = positive CF (money returned to investor)
-    flows.push({ t: yrs, cf: -flow }); // flow is already net (positive=deposit, negative=withdrawal)
+    flows.push({ t: yrs, cf: -flow });
   }
 
   if (!flows.length) {
@@ -998,7 +1007,10 @@ function computeMWR(txs, finalVal) {
   }
 
   if (!flows.length) return null;
-  flows.push({ t: 0, cf: finalVal }); // current value = final positive CF
+  // finalVal should be total portfolio value (assets + cash)
+  const lastRow = h[h.length - 1];
+  const actualFinal = +(lastRow?.total_value || lastRow?.portfolio_value_usd || 0) || finalVal;
+  flows.push({ t: 0, cf: actualFinal }); // current value = final positive CF
 
   // Newton-Raphson to solve for IRR (annualized)
   let r = 0.08;

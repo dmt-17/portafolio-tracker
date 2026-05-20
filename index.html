@@ -201,6 +201,12 @@ details summary::-webkit-details-marker{display:none}
 details p{font-size:13px;color:var(--text-s);margin-top:10px;margin-bottom:6px;line-height:1.7}
 details strong{color:var(--text)}
 .refresh-badge{font-size:10px;color:var(--text-d);margin-left:auto}
+/* Corrección Header Mobile */
+@media(max-width: 768px) {
+  header { flex-wrap: wrap; }
+  .nav-pills { order: 3; width: 100%; margin-top: 8px; justify-content: flex-start; }
+  .refresh-badge { display: none; }
+}
 </style>
 </head>
 <body>
@@ -877,6 +883,48 @@ function globalPos(openArr) {
   });
 }
 
+function computeYTDAlpha() {
+  const currYear = new Date().getFullYear();
+  const startStr = `${currYear}-01-01`;
+  const hist = S.portfolioHistory;
+  if(!hist.length) return null;
+
+  // Buscar la base (último día del año anterior, o el primer día si empezó este año)
+  let baseRow = [...hist].reverse().find(h => h.date < startStr) || hist[0];
+  const ytdHist = hist.filter(h => h.date >= baseRow.date);
+  
+  if(ytdHist.length < 2) return null;
+
+  // Calcular TWRR YTD del portafolio
+  let twrrYTD = 1;
+  for (let i = 1; i < ytdHist.length; i++) {
+    const sVal = +(ytdHist[i-1].total_value || ytdHist[i-1].portfolio_value_usd || 0);
+    const eVal = +(ytdHist[i].total_value   || ytdHist[i].portfolio_value_usd   || 0);
+    const flow = +(ytdHist[i].external_flow_usd || 0);
+    if (sVal > 0 && eVal > 0) {
+      const r = (eVal - flow) / sVal;
+      if(r > 0 && r <= 3.0) twrrYTD *= r;
+    }
+  }
+  const twrrYTDPct = (twrrYTD - 1) * 100;
+
+  // Calcular rendimiento YTD del SPY
+  const bdata = S.benchmarks['SPY'];
+  if(!bdata) return null;
+  
+  const spyDates = Object.keys(bdata).sort();
+  let spyBase = null, spyEnd = bdata[spyDates[spyDates.length - 1]];
+  for (let i = spyDates.length - 1; i >= 0; i--) {
+    if (spyDates[i] <= baseRow.date) { spyBase = bdata[spyDates[i]]; break; }
+  }
+  if(!spyBase) spyBase = bdata[spyDates[0]];
+  
+  if(!spyBase || !spyEnd) return null;
+  const spyYTDPct = (spyEnd / spyBase - 1) * 100;
+  
+  return twrrYTDPct - spyYTDPct;
+}
+
 function computeMetrics(txs, openArr, closedArr) {
   const deposits = txs.filter(t=>t.type==='Deposit');
   const totalInvested   = deposits.reduce((s,t)=>s+Math.abs(+(t.amount_usd||0)),0);
@@ -916,11 +964,12 @@ function computeMetrics(txs, openArr, closedArr) {
   const lastHistRow = S.portfolioHistory[S.portfolioHistory.length - 1];
   const totalValForMWR = +(lastHistRow?.total_value || 0) || portVal;
   const mwrAnn  = computeMWR(txs, totalValForMWR);
+  const alphaYTD = computeYTDAlpha(); // <-- NUEVA LÍNEA
 
   return { totalInvested, investedPEN, investedUSD, avgFX,
     totalFees, totalTaxes, totalInt, mktValue, costBasis, portVal,
     realPnl, unrPnl, dailyPnl, totalCash, cashMap: cashMap_global, totalDivs, totalDRIP,
-    roi, roiAnn, twrr, twrrAnn, mwrAnn, mdd, years };
+    roi, roiAnn, twrr, twrrAnn, mwrAnn, mdd, years, alphaYTD }; // <-- AÑADIDO alphaYTD
 }
 
 function computeTWRRAndMDD() {
@@ -1355,7 +1404,7 @@ function renderPerformance(m) {
     ['Maximum Drawdown (MDD)', m.mdd, 'Max drop from peak'],
     ['MWR / IRR Ann.',   m.mwrAnn,  'Money-weighted ann.'],
     ['Realized P&L',     m.realPnl, 'Closed positions net'],
-    ['Alpha vs SPY',     alpha,     alpha!=null?(alpha>=0?'Beating market ↑':'Below benchmark ↓'):'Benchmark loading…'],
+    ['Alpha vs SPY (YTD)', m.alphaYTD, m.alphaYTD!=null?(m.alphaYTD>=0?'Beating market YTD ↑':'Below benchmark YTD ↓'):'Benchmark loading…'],
   ].map(([label,val,sub])=>`<div class="card">
     <div class="card-header">${label}</div>
     <div class="kpi-val mono ${label.includes('P&L') || typeof val === 'number' ? (val>=0?'pos':'neg') : ''}">${val!=null?(label.includes('P&L')?'$'+fmt(val):pct(val)):'—'}</div>
@@ -1630,14 +1679,28 @@ async function saveTx() {
       const gfSym = document.getElementById('f-gf')?.value?.trim() || ticker;
       const assetClass = document.getElementById('f-new-class').value;
       const sector = document.getElementById('f-new-sector').value;
-      // Use name and gf_symbol from Google Sheets if available
-      const assetNameFromSheet = S.prices[ticker]?.name || ticker;
-      const gfSymFromSheet     = S.prices[ticker]?.gfSymbol || gfSym || ticker;
+      
+      // 1. Intenta sacar el nombre de Sheets
+      let assetName = S.prices[ticker]?.name;
+      
+      // 2. Si no estaba en Sheets, obtenemos el nombre real desde Twelve Data automáticamente
+      if (!assetName || assetName === ticker) {
+        try {
+          const r = await fetch(`https://api.twelvedata.com/quote?symbol=${ticker}&apikey=${TWELVE_DATA_KEY}`);
+          const d = await r.json();
+          if (d.name) assetName = d.name;
+        } catch(e) {}
+      }
+      assetName = assetName || ticker; // Fallback de seguridad
+      
+      const gfSymFromSheet = S.prices[ticker]?.gfSymbol || gfSym || ticker;
+      
       await db.from('assets').insert({
-        ticker, name: assetNameFromSheet,
+        ticker, name: assetName,
         asset_class: assetClass, sector: sector,
         currency: 'USD', gf_symbol: gfSymFromSheet
       });
+      
       // Reload assets
       const aR = await db.from('assets').select('*').order('ticker');
       S.assets = aR.data || [];
@@ -1891,50 +1954,121 @@ async function runRecalc() {
   btn.disabled = true;
   btn.innerText = 'Processing...';
 
-  const flows = {};
-  S.transactions.forEach(t => {
-      if(t.type === 'Deposit' || t.type === 'Withdrawal') {
-          const amt = Math.abs(+(t.net_amount_usd || t.amount_usd || 0));
-          const sign = t.type === 'Deposit' ? 1 : -1;
-          flows[t.date] = (flows[t.date] || 0) + (amt * sign);
+  const statusEl = document.getElementById('recalc-status');
+  const barEl = document.getElementById('recalc-bar');
+
+  // ============================================================
+  // PASO EXTRA: DETECTAR Y PARCHAR PRECIOS DE ACTIVOS NUEVOS
+  // ============================================================
+  statusEl.innerText = `Checking for missing historical prices...`;
+  
+  // Obtener todos los tickers únicos que has operado desde la fecha de inicio
+  const activeTickersInPeriod = [...new Set(
+    S.transactions
+      .filter(t => t.date >= startDate && t.ticker)
+      .map(t => t.ticker.toUpperCase().trim())
+  )];
+
+  if (activeTickersInPeriod.length > 0) {
+    const todayStr = new Date().toISOString().split('T')[0];
+    
+    for (const ticker of activeTickersInPeriod) {
+      // Verificar si ya tenemos precios para este ticker en este rango de fechas
+      const { data: existingPrices } = await db
+        .from('bd_prices')
+        .select('date')
+        .eq('ticker', ticker)
+        .gte('date', startDate);
+        
+      const histDaysNeeded = S.portfolioHistory.filter(h => h.date >= startDate && h.date <= todayStr);
+      
+      // Si faltan días en la bd_prices para este activo, le pedimos el historial a Twelve Data
+      if (!existingPrices || existingPrices.length < histDaysNeeded.length) {
+        statusEl.innerText = `Fetching past prices from Twelve Data for ${ticker}...`;
+        try {
+          // Endpoint de historial de Twelve Data (/time_series)
+          const res = await fetch(`https://api.twelvedata.com/time_series?symbol=${ticker}&interval=1day&start_date=${startDate}&end_date=${todayStr}&apikey=${TWELVE_DATA_KEY}`);
+          const data = await res.json();
+          
+          if (data.values && data.values.length > 0) {
+            const inserts = data.values.map(v => {
+              // Extrae la fecha (YYYY-MM-DD) que viene en 'datetime'
+              const datePart = v.datetime.split(' ')[0]; 
+              return {
+                ticker: ticker,
+                date: datePart,
+                price: parseFloat(v.close || v.open), // Usamos tu nombre de columna 'price'
+                source: 'twelve_hist'
+              };
+            });
+            
+            // Guardamos los precios históricos en tu tabla bd_prices
+            // Usamos upsert por si algunos días ya existían, para no duplicar
+            await db.from('bd_prices').upsert(inserts, { onConflict: 'date,ticker' });
+          }
+        } catch (e) {
+          console.error(`No se pudo auto-parchar el historial de ${ticker}:`, e);
+        }
       }
+    }
+  }
+
+  // ============================================================
+  // CONTINÚA EL PROCESO NORMAL DE RECALCULADO
+  // ============================================================
+  statusEl.innerText = `Loading consolidated historical prices...`;
+  const { data: dbPrices } = await db.from('bd_prices').select('date, ticker, price').gte('date', startDate);
+  
+  const pricesMap = {};
+  (dbPrices || []).forEach(p => {
+    if (!pricesMap[p.date]) pricesMap[p.date] = {};
+    pricesMap[p.date][p.ticker.toUpperCase()] = parseFloat(p.price);
   });
 
   let histToUpdate = S.portfolioHistory.filter(h => h.date >= startDate).sort((a,b) => a.date.localeCompare(b.date));
-  let prevInvested = 0;
-  const pastHist = S.portfolioHistory.filter(h => h.date < startDate).sort((a,b) => b.date.localeCompare(a.date));
-  
-  if (pastHist.length > 0) {
-      prevInvested = +(pastHist[0].total_invested_usd || 0);
-  } else {
-      S.transactions.forEach(t => {
-          if (t.date < startDate) {
-              if (t.type === 'Deposit') prevInvested += Math.abs(+(t.net_amount_usd || t.amount_usd || 0));
-              if (t.type === 'Withdrawal') prevInvested -= Math.abs(+(t.net_amount_usd || t.amount_usd || 0));
-          }
-      });
-  }
-
-  const statusEl = document.getElementById('recalc-status');
-  const barEl = document.getElementById('recalc-bar');
-  let currentInvested = prevInvested;
 
   for (let i = 0; i < histToUpdate.length; i++) {
-      const h = histToUpdate[i];
-      const date = h.date;
-      const flowToday = flows[date] || 0;
-      currentInvested += flowToday;
-      
-      statusEl.innerText = `Updating ${date} (${i+1}/${histToUpdate.length})`;
-      barEl.style.width = ((i+1)/histToUpdate.length * 100) + '%';
+    const h = histToUpdate[i];
+    const currentDate = h.date;
 
-      await db.from('portfolio_history').update({
-          external_flow_usd: flowToday,
-          total_invested_usd: currentInvested
-      }).eq('id', h.id);
+    statusEl.innerText = `Calculating assets for ${currentDate} (${i+1}/${histToUpdate.length})`;
+    barEl.style.width = ((i+1)/histToUpdate.length * 100) + '%';
+
+    const txsUpToDate = S.transactions.filter(t => t.date <= currentDate);
+    const { open } = computePos(txsUpToDate); 
+    const cashMapAtDate = computeCash(txsUpToDate);
+    
+    let totalCashAtDate = Object.values(cashMapAtDate).reduce((s,v)=>s+v,0);
+    let portfolioValueAtDate = 0;
+    const dayPrices = pricesMap[currentDate] || {};
+
+    open.forEach(p => {
+      // Ahora sí, el precio del día 16 o 17 estará garantizado en la BD gracias al parche de arriba
+      const historicalPrice = dayPrices[p.ticker.toUpperCase()] || p.avgCost;
+      portfolioValueAtDate += p.shares * historicalPrice;
+    });
+
+    const totalValueAtDate = portfolioValueAtDate + totalCashAtDate;
+
+    const depositsUpToDate = txsUpToDate.filter(t => t.type === 'Deposit');
+    const withdrawalsUpToDate = txsUpToDate.filter(t => t.type === 'Withdrawal');
+    const totalInvestedAtDate = depositsUpToDate.reduce((s,t)=>s+Math.abs(+(t.amount_usd||0)),0) 
+                              - withdrawalsUpToDate.reduce((s,t)=>s+Math.abs(+(t.amount_usd||0)),0);
+
+    const todayTxs = S.transactions.filter(t => t.date === currentDate);
+    let todayFlow = todayTxs.filter(t=>t.type==='Deposit').reduce((s,t)=>s+Math.abs(+(t.amount_usd||0)),0)
+                  - todayTxs.filter(t=>t.type==='Withdrawal').reduce((s,t)=>s+Math.abs(+(t.amount_usd||0)),0);
+
+    await db.from('portfolio_history').update({
+        portfolio_value_usd: portfolioValueAtDate,
+        cash_usd: totalCashAtDate,
+        total_value: totalValueAtDate,
+        total_invested_usd: totalInvestedAtDate,
+        external_flow_usd: todayFlow
+    }).eq('id', h.id);
   }
 
-  statusEl.innerText = `Completed! Reloading data...`;
+  statusEl.innerText = `Completed! Updating interface...`;
   await loadAll();
   renderAll();
   

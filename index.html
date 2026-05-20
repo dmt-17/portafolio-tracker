@@ -678,14 +678,18 @@ async function fetchFromGoogleSheets() {
       return false;
     }
 
-    const hdr = rows[0].map(h => h.toLowerCase());
+    const hdr = rows[0].map(h => h.trim().toLowerCase().replace(/"/g,''));
     const iT  = hdr.indexOf('ticker');
     const iP  = hdr.indexOf('price');
     const iC  = hdr.indexOf('prev_close');
+    const iG  = hdr.indexOf('gf_symbol');
     const iN  = hdr.indexOf('name');
 
+    console.log('[Sheets] Headers:', hdr);
+    console.log('[Sheets] ticker='+iT+' price='+iP+' prev_close='+iC+' gf_symbol='+iG+' name='+iN);
+
     if (iT < 0 || iP < 0) {
-      console.error("Columnas no encontradas. Encabezados detectados:", hdr);
+      console.error('Sheets columns not found. Headers:', hdr);
       return false;
     }
 
@@ -706,8 +710,9 @@ async function fetchFromGoogleSheets() {
 
       if (ticker === 'USD_PEN' && !isNaN(price)) { fxRate = price; continue; }
 
-      const assetName = (iN >= 0 && row[iN]) ? row[iN].trim() : null;
-      S.prices[ticker] = { price, prev: isNaN(prev)||prev<=0 ? price : prev, source:'sheets', name: assetName };
+      const assetName = (iN >= 0 && row[iN]) ? row[iN].trim().replace(/"/g,'') : null;
+      const gfSymbol  = (iG >= 0 && row[iG]) ? row[iG].trim().replace(/"/g,'') : null;
+      S.prices[ticker] = { price, prev: isNaN(prev)||prev<=0 ? price : prev, source:'sheets', name: assetName, gfSymbol };
       loaded++;
     }
     
@@ -932,19 +937,23 @@ function computeTWRRAndMDD() {
   for (let i = 1; i < h.length; i++) {
     const startVal = +(h[i-1].portfolio_value_usd || 0);
     const endVal   = +(h[i].portfolio_value_usd   || 0);
+    // external_flow_usd is on the SAME day row (confirmed convention)
     const flow     = +(h[i].external_flow_usd     || 0);
 
-    if (startVal <= 0) continue;
+    if (startVal <= 0 || endVal <= 0) continue;
 
-    // Fórmula: Subperiod factor = (Total Value hoy - External Flow) / Total Value ayer
+    // Subperiod factor = (Total Value today - External Flow) / Total Value yesterday
+    // This removes the effect of new capital injections from the return calculation
     const subReturn = (endVal - flow) / startVal;
-    
-    // Sanity check para ignorar anomalías graves de data
-    if (subReturn < 0.2 || subReturn > 5.0) continue;
+
+    // Only skip truly impossible values (negative portfolio or >500% daily gain)
+    // Don't filter large positive moves — deposits can cause endVal >> startVal
+    if (subReturn <= 0 || subReturn > 6.0) continue;
 
     twrr *= subReturn;
     validPeriods++;
 
+    // Max drawdown tracks the running TWRR curve
     if (twrr > peak) peak = twrr;
     const dd = (twrr - peak) / peak;
     if (dd < maxDD) maxDD = dd;
@@ -957,26 +966,42 @@ function computeTWRRAndMDD() {
 }
 
 function computeMWR(txs, finalVal) {
-  const flows = [];
+  // Option A: Use portfolio_history external_flow_usd as cash flows
+  // This is more reliable than reconstructing from transactions
+  // because external_flow already captures deposits/withdrawals correctly.
+  const h = S.portfolioHistory;
+  if (!h.length || finalVal <= 0) return null;
+
   const now = new Date();
-  for (const t of txs) {
-    const d = new Date(t.date);
-    const yrs = (now - d) / (365.25 * 86400000);
+  const flows = [];
+
+  // Each external flow in history is a cash outflow from investor's perspective
+  for (const row of h) {
+    const flow = +(row.external_flow_usd || 0);
+    if (Math.abs(flow) < 0.01) continue; // skip zero-flow days
+    const yrs = (now - new Date(row.date)) / (365.25 * 86400000);
     if (yrs < 0) continue;
-    
-    // CORRECCIÓN MWR: Priorizar net_amount_usd para considerar las fees correctas
-    const amt = Math.abs(+(t.net_amount_usd || t.amount_usd || 0));
-    
-    if (t.type === 'Deposit') {
-      flows.push({ t: yrs, cf: -amt }); 
-    } else if (t.type === 'Withdrawal') {
-      flows.push({ t: yrs, cf: +amt }); 
+    // Deposit = negative CF (money left investor's pocket)
+    // Withdrawal = positive CF (money returned to investor)
+    flows.push({ t: yrs, cf: -flow }); // flow is already net (positive=deposit, negative=withdrawal)
+  }
+
+  if (!flows.length) {
+    // Fallback: use transactions if no flows in history
+    for (const t of txs) {
+      const yrs = (now - new Date(t.date)) / (365.25 * 86400000);
+      if (yrs < 0) continue;
+      const amt = Math.abs(+(t.amount_usd || 0));
+      if (t.type === 'Deposit')    flows.push({ t: yrs, cf: -amt });
+      else if (t.type === 'Withdrawal') flows.push({ t: yrs, cf: +amt });
     }
   }
-  if (!flows.length || finalVal <= 0) return null;
-  flows.push({ t: 0, cf: finalVal });
 
-  let r = 0.08; 
+  if (!flows.length) return null;
+  flows.push({ t: 0, cf: finalVal }); // current value = final positive CF
+
+  // Newton-Raphson to solve for IRR (annualized)
+  let r = 0.08;
   for (let iter = 0; iter < 200; iter++) {
     let npv = 0, dnpv = 0;
     for (const f of flows) {
@@ -987,7 +1012,7 @@ function computeMWR(txs, finalVal) {
     if (Math.abs(dnpv) < 1e-12) break;
     const nr = r - npv / dnpv;
     if (Math.abs(nr - r) < 1e-9) { r = nr; break; }
-    r = Math.max(-0.95, Math.min(nr, 10)); 
+    r = Math.max(-0.95, Math.min(nr, 10));
   }
   return (r > -0.95 && r < 10) ? r * 100 : null;
 }
@@ -1595,8 +1620,17 @@ async function saveTx() {
       const gfSym = document.getElementById('f-gf')?.value?.trim() || ticker;
       const assetClass = document.getElementById('f-new-class').value;
       const sector = document.getElementById('f-new-sector').value;
+      // Use name and gf_symbol from Google Sheets if available
       const assetNameFromSheet = S.prices[ticker]?.name || ticker;
-      await db.from('assets').insert({ticker, name:assetNameFromSheet, asset_class:assetClass, sector:sector, currency:'USD', gf_symbol:gfSym});
+      const gfSymFromSheet     = S.prices[ticker]?.gfSymbol || gfSym || ticker;
+      await db.from('assets').insert({
+        ticker, name: assetNameFromSheet,
+        asset_class: assetClass, sector: sector,
+        currency: 'USD', gf_symbol: gfSymFromSheet
+      });
+      // Reload assets
+      const aR = await db.from('assets').select('*').order('ticker');
+      S.assets = aR.data || [];
     }
   }
 

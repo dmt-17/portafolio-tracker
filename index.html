@@ -916,7 +916,10 @@ function computeMetrics(txs, openArr, closedArr) {
   const roiAnn  = years>0?(Math.pow(1+roi/100,1/years)-1)*100:0;
   const twrrAnn = twrr!=null&&years>0?(Math.pow(1+twrr/100,1/years)-1)*100:null;
   
-  const mwrAnn  = computeMWR(txs, portVal);
+  // MWR needs total value (assets + cash), not just market value of assets
+  const lastHistRow = S.portfolioHistory[S.portfolioHistory.length - 1];
+  const totalValForMWR = +(lastHistRow?.total_value || 0) || portVal;
+  const mwrAnn  = computeMWR(txs, totalValForMWR);
 
   return { totalInvested, investedPEN, investedUSD, avgFX,
     totalFees, totalTaxes, totalInt, mktValue, costBasis, portVal,

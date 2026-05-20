@@ -512,7 +512,7 @@ details strong{color:var(--text)}
 // ============================================================
 const SUPABASE_URL = 'YOUR_PROJECT_URL_HERE';
 const SUPABASE_KEY = 'YOUR_PUBLISHABLE_KEY_HERE';
-const GS_PRICES_URL = 'https://script.google.com/macros/s/AKfycbwdGZyaKnBrXitdZpLWZ2hHka8RBfTGZPAPjB-XDUpw_mCVTc5NmyfU6Fnkg-F3VORzvA/exec';
+const GS_PRICES_URL = 'https://script.google.com/macros/s/AKfycbx0qtAgglMORzLS7cRJZ3AhQySKhKKZWFdvf7FVd8qjeyQdsoK7VixgCQtj9UkjnObZ1Q/exec';
 const TWELVE_DATA_KEY = '8a49d31da45745028474d7b58cb0dbfb';
 const CORS_PROXY = 'https://corsproxy.io/?';
 
@@ -716,18 +716,30 @@ async function fetchFromTwelveData(tickers) {
 
   const batch = missing.slice(0, 55).join(',');
   try {
-    const r = await fetch(`https://api.twelvedata.com/price?symbol=${batch}&apikey=${TWELVE_DATA_KEY}`);
+    // CAMBIO 1: Usamos el endpoint /quote que devuelve precio actual Y precio de ayer
+    const r = await fetch(`https://api.twelvedata.com/quote?symbol=${batch}&apikey=${TWELVE_DATA_KEY}`);
     const d = await r.json();
     let loaded = 0;
+    
     for (const ticker of missing) {
       const entry = d[ticker] || d;
-      const price = parseFloat(entry?.price);
+      
+      // CAMBIO 2: Extraemos el precio en vivo ('close') y el de ayer ('previous_close')
+      const price = parseFloat(entry?.close || entry?.previous_close);
+      const prev = parseFloat(entry?.previous_close);
+
       if (!isNaN(price) && price > 0) {
-        S.prices[ticker] = { price, prev: S.prices[ticker]?.prev||price, source:'twelve' };
+        S.prices[ticker] = { 
+          price: price, 
+          prev: (!isNaN(prev) && prev > 0) ? prev : price, 
+          source:'twelve' 
+        };
         loaded++;
       }
     }
-  } catch(e) {}
+  } catch(e) {
+    console.error("Error en Twelve Data:", e);
+  }
 }
 
 async function fetchBenchmarkHistory() {
@@ -1403,7 +1415,7 @@ function renderPerfChart() {
       datasets:[
         { label:'TWRR%', data:twrrData, borderColor:'#9f7aea', borderWidth:2, tension:.3, pointRadius:0, spanGaps:true },
         { label:'ROI%',  data:roiData,  borderColor:'#34d399', borderWidth:2, tension:.3, pointRadius:0, spanGaps:true },
-        { label:'SPY',   data:spyData,  borderColor:'##E6C15A', borderWidth:1.5, borderDash:[5,4], tension:.3, pointRadius:0, spanGaps:true },
+        { label:'SPY',   data:spyData,  borderColor:'#E6C15A', borderWidth:1.5, borderDash:[5,4], tension:.3, pointRadius:0, spanGaps:true },
         { label:'QQQ',   data:qqqData,  borderColor:'#4DA3FF', borderWidth:1.5, borderDash:[3,3], tension:.3, pointRadius:0, spanGaps:true },
       ]
     },

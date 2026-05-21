@@ -1971,7 +1971,7 @@ async function runRecalc() {
     
     for (const ticker of activeTickersInPeriod) {
       const { data: existingPrices } = await db
-        .from('bd_prices')
+        .from('prices')
         .select('date')
         .eq('ticker', ticker)
         .gte('date', startDate);
@@ -1992,7 +1992,7 @@ async function runRecalc() {
                 source: 'twelve_hist'
               };
             });
-            await db.from('bd_prices').upsert(inserts, { onConflict: 'date,ticker' });
+            await db.from('prices').upsert(inserts, { onConflict: 'date,ticker' });
           }
         } catch (e) {
           console.error(`Error parcheando ${ticker}:`, e);
@@ -2005,7 +2005,7 @@ async function runRecalc() {
   // 2. CARGAR PRECIOS Y PREPARAR MEMORIA
   // ============================================================
   statusEl.innerText = `Loading consolidated historical prices...`;
-  const { data: dbPrices } = await db.from('bd_prices').select('date, ticker, price').gte('date', startDate);
+  const { data: dbPrices } = await db.from('prices').select('date, ticker, price').gte('date', startDate);
   
   const pricesMap = {};
   (dbPrices || []).forEach(p => {

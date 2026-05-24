@@ -1982,8 +1982,10 @@ async function runRecalc() {
         .eq('ticker', ticker)
         .gte('date', startDate);
         
-      if (!existingPrices || existingPrices.length < (totalDays * 0.6)) {
-        statusEl.innerText = `Fetching past prices from Twelve Data for ${ticker}...`;
+      const expectedDays = Math.floor(totalDays * 0.65);
+        
+      if (!existingPrices || existingPrices.length < expectedDays) {
+        statusEl.innerText = `Downloading ${ticker} (Waiting 8s to bypass API limits...)`;
         try {
           const res = await fetch(`https://api.twelvedata.com/time_series?symbol=${ticker}&interval=1day&start_date=${startDate}&end_date=${todayStr}&apikey=${TWELVE_DATA_KEY}`);
           const data = await res.json();
@@ -1998,8 +2000,12 @@ async function runRecalc() {
               };
             });
             await db.from('prices').upsert(inserts, { onConflict: 'date,ticker' });
+          } else if (data.status === "error") {
+            console.warn(data.message);
           }
         } catch (e) {}
+        
+        await new Promise(r => setTimeout(r, 8000));
       }
     }
   }
@@ -2095,7 +2101,7 @@ async function runRecalc() {
   closeModal('modal-recalc');
   btn.disabled = false;
   btn.innerText = 'Start Process';
-} 
+}  
 
 init();
 </script>

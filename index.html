@@ -1957,9 +1957,17 @@ async function runRecalc() {
   const statusEl = document.getElementById('recalc-status');
   const barEl = document.getElementById('recalc-bar');
 
-  // ============================================================
-  // 1. DETECTAR Y PARCHAR (Solo si el activo no tiene NINGÚN registro)
-  // ============================================================
+  const todayStr = new Date().toISOString().split('T')[0];
+  const datesToProcess = [];
+  let currD = new Date(startDate + 'T00:00:00');
+  const endD = new Date(todayStr + 'T00:00:00');
+  
+  while (currD <= endD) {
+    datesToProcess.push(currD.toISOString().split('T')[0]);
+    currD.setDate(currD.getDate() + 1);
+  }
+  const totalDays = datesToProcess.length;
+
   statusEl.innerText = `Checking for missing historical prices...`;
   
   const activeTickersInPeriod = [...new Set(
@@ -1967,8 +1975,6 @@ async function runRecalc() {
   )];
 
   if (activeTickersInPeriod.length > 0) {
-    const todayStr = new Date().toISOString().split('T')[0];
-    
     for (const ticker of activeTickersInPeriod) {
       const { data: existingPrices } = await db
         .from('prices')
@@ -1976,8 +1982,7 @@ async function runRecalc() {
         .eq('ticker', ticker)
         .gte('date', startDate);
         
-      // CORRECCIÓN: Solo consultamos la API si no hay absolutamente ningún precio en la BD para este activo
-      if (!existingPrices || existingPrices.length === 0) {
+      if (!existingPrices || existingPrices.length < (totalDays * 0.6)) {
         statusEl.innerText = `Fetching past prices from Twelve Data for ${ticker}...`;
         try {
           const res = await fetch(`https://api.twelvedata.com/time_series?symbol=${ticker}&interval=1day&start_date=${startDate}&end_date=${todayStr}&apikey=${TWELVE_DATA_KEY}`);
@@ -1994,44 +1999,40 @@ async function runRecalc() {
             });
             await db.from('prices').upsert(inserts, { onConflict: 'date,ticker' });
           }
-        } catch (e) {
-          console.error(`Error parcheando ${ticker}:`, e);
-        }
+        } catch (e) {}
       }
     }
   }
 
-  // ============================================================
-  // 2. CARGAR PRECIOS Y PREPARAR MEMORIA
-  // ============================================================
   statusEl.innerText = `Loading consolidated historical prices...`;
-  const { data: dbPrices } = await db.from('prices').select('date, ticker, close_price').gte('date', startDate);
+  const { data: dbPrices } = await db.from('prices').select('date, ticker, close_price').order('date', { ascending: true });
   
   const pricesMap = {};
+  const latestKnownPrice = {};
+
   (dbPrices || []).forEach(p => {
-    if (!pricesMap[p.date]) pricesMap[p.date] = {};
-    pricesMap[p.date][p.ticker.toUpperCase()] = parseFloat(p.close_price);
+    const tickerKey = p.ticker.toUpperCase();
+    const priceVal = parseFloat(p.close_price);
+    
+    if (p.date <= startDate) {
+      latestKnownPrice[tickerKey] = priceVal;
+    }
+    
+    if (p.date >= startDate) {
+      if (!pricesMap[p.date]) pricesMap[p.date] = {};
+      pricesMap[p.date][tickerKey] = priceVal;
+    }
   });
 
-  let histToUpdate = S.portfolioHistory.filter(h => h.date >= startDate).sort((a,b) => a.date.localeCompare(b.date));
-  
-  // CORRECCIÓN: Obtener el TWRR y Valor del día anterior para no romper la cadena matemática
   const baseRow = S.portfolioHistory.filter(h => h.date < startDate).pop();
-  let currentTWRR = baseRow && baseRow.twrr_cumulative != null ? +(baseRow.twrr_cumulative) : 1;
+  let currentTWRRFactor = baseRow && baseRow.twrr_cumulative != null ? (parseFloat(baseRow.twrr_cumulative) + 1) : 1;
   let prevTotalValue = baseRow ? +(baseRow.total_value || baseRow.portfolio_value_usd || 0) : 0;
 
-  // CORRECCIÓN: Memoria de precios para los fines de semana
-  const latestKnownPrice = {}; 
+  for (let i = 0; i < totalDays; i++) {
+    const currentDate = datesToProcess[i];
 
-  // ============================================================
-  // 3. RECALCULAR DÍA POR DÍA CON MATEMÁTICA EXACTA
-  // ============================================================
-  for (let i = 0; i < histToUpdate.length; i++) {
-    const h = histToUpdate[i];
-    const currentDate = h.date;
-
-    statusEl.innerText = `Calculating assets for ${currentDate} (${i+1}/${histToUpdate.length})`;
-    barEl.style.width = ((i+1)/histToUpdate.length * 100) + '%';
+    statusEl.innerText = `Calculating metrics for ${currentDate} (${i+1}/${totalDays})`;
+    barEl.style.width = ((i+1)/totalDays * 100) + '%';
 
     const txsUpToDate = S.transactions.filter(t => t.date <= currentDate);
     const { open } = computePos(txsUpToDate); 
@@ -2043,7 +2044,6 @@ async function runRecalc() {
 
     open.forEach(p => {
       const t = p.ticker.toUpperCase();
-      // Si hoy hay precio, lo guardamos en memoria. Si no (fin de semana), usamos el último conocido.
       if (dayPrices[t]) latestKnownPrice[t] = dayPrices[t];
       
       const historicalPrice = latestKnownPrice[t] || p.avgCost; 
@@ -2061,12 +2061,11 @@ async function runRecalc() {
     let todayFlow = todayTxs.filter(t=>t.type==='Deposit').reduce((s,t)=>s+Math.abs(+(t.amount_usd||0)),0)
                   - todayTxs.filter(t=>t.type==='Withdrawal').reduce((s,t)=>s+Math.abs(+(t.amount_usd||0)),0);
 
-    // MATEMÁTICA DE RENDIMIENTO (TWRR, ROI, Subperiod)
     let subperiod = 1;
     if (prevTotalValue > 0) {
       subperiod = (totalValueAtDate - todayFlow) / prevTotalValue;
       if (subperiod > 0 && subperiod <= 3.0) {
-        currentTWRR *= subperiod;
+        currentTWRRFactor *= subperiod;
       } else {
         subperiod = 1; 
       }
@@ -2074,19 +2073,18 @@ async function runRecalc() {
     
     let currentROI = totalInvestedAtDate > 0 ? (totalValueAtDate - totalInvestedAtDate) / totalInvestedAtDate : 0;
 
-    // Actualizamos la BD incluyendo las métricas de rendimiento
-    await db.from('portfolio_history').update({
+    await db.from('portfolio_history').upsert({
+        date: currentDate,
         portfolio_value_usd: portfolioValueAtDate,
         cash_usd: totalCashAtDate,
         total_value: totalValueAtDate,
         total_invested_usd: totalInvestedAtDate,
         external_flow_usd: todayFlow,
         subperiod_factor: subperiod,
-        twrr_cumulative: currentTWRR,
+        twrr_cumulative: currentTWRRFactor - 1,
         roi_cumulative: currentROI
-    }).eq('id', h.id);
+    }, { onConflict: 'date' });
 
-    // El valor de hoy se convierte en el valor anterior para la iteración de mañana
     prevTotalValue = totalValueAtDate; 
   }
 
@@ -2097,7 +2095,7 @@ async function runRecalc() {
   closeModal('modal-recalc');
   btn.disabled = false;
   btn.innerText = 'Start Process';
-}
+} 
 
 init();
 </script>

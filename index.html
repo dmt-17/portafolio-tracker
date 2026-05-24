@@ -1988,7 +1988,7 @@ async function runRecalc() {
               return {
                 ticker: ticker,
                 date: v.datetime.split(' ')[0],
-                price: parseFloat(v.close || v.open),
+                close_price: parseFloat(v.close || v.open),
                 source: 'twelve_hist'
               };
             });
@@ -2005,12 +2005,12 @@ async function runRecalc() {
   // 2. CARGAR PRECIOS Y PREPARAR MEMORIA
   // ============================================================
   statusEl.innerText = `Loading consolidated historical prices...`;
-  const { data: dbPrices } = await db.from('prices').select('date, ticker, price').gte('date', startDate);
+  const { data: dbPrices } = await db.from('prices').select('date, ticker, close_price').gte('date', startDate);
   
   const pricesMap = {};
   (dbPrices || []).forEach(p => {
     if (!pricesMap[p.date]) pricesMap[p.date] = {};
-    pricesMap[p.date][p.ticker.toUpperCase()] = parseFloat(p.price);
+    pricesMap[p.date][p.ticker.toUpperCase()] = parseFloat(p.close_price);
   });
 
   let histToUpdate = S.portfolioHistory.filter(h => h.date >= startDate).sort((a,b) => a.date.localeCompare(b.date));

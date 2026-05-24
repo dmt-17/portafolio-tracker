@@ -1971,7 +1971,7 @@ async function runRecalc() {
   statusEl.innerText = `Checking for missing historical prices...`;
   
   const activeTickersInPeriod = [...new Set(
-    S.transactions.filter(t => t.date >= startDate && t.ticker).map(t => t.ticker.toUpperCase().trim())
+    S.transactions.filter(t => t.ticker && t.date <= todayStr).map(t => t.ticker.toUpperCase().trim())
   )];
 
   if (activeTickersInPeriod.length > 0) {
@@ -1982,26 +1982,48 @@ async function runRecalc() {
         .eq('ticker', ticker)
         .gte('date', startDate);
         
-      const expectedDays = Math.floor(totalDays * 0.65);
+      const existingDates = existingPrices ? existingPrices.map(p => p.date).sort() : [];
+      const lastRecordedDate = existingDates.length > 0 ? existingDates[existingDates.length - 1] : null;
+      
+      let fetchStart = null;
+
+      if (!lastRecordedDate) {
+        fetchStart = startDate;
+      } else {
+        const msDiff = new Date(todayStr + 'T00:00:00') - new Date(lastRecordedDate + 'T00:00:00');
+        const daysSinceLast = msDiff / (1000 * 60 * 60 * 24);
         
-      if (!existingPrices || existingPrices.length < expectedDays) {
-        statusEl.innerText = `Downloading ${ticker} (Waiting 8s to bypass API limits...)`;
+        if (daysSinceLast > 3) {
+          let nextDay = new Date(lastRecordedDate + 'T00:00:00');
+          nextDay.setDate(nextDay.getDate() + 1);
+          fetchStart = nextDay.toISOString().split('T')[0];
+        }
+      }
+
+      if (fetchStart) {
+        statusEl.innerText = `Downloading ${ticker} from ${fetchStart}... (Waiting 8s)`;
         try {
-          const res = await fetch(`https://api.twelvedata.com/time_series?symbol=${ticker}&interval=1day&start_date=${startDate}&end_date=${todayStr}&apikey=${TWELVE_DATA_KEY}`);
+          const res = await fetch(`https://api.twelvedata.com/time_series?symbol=${ticker}&interval=1day&start_date=${fetchStart}&end_date=${todayStr}&apikey=${TWELVE_DATA_KEY}`);
           const data = await res.json();
           
           if (data.values && data.values.length > 0) {
-            const inserts = data.values.map(v => {
-              return {
-                ticker: ticker,
-                date: v.datetime.split(' ')[0],
-                close_price: parseFloat(v.close || v.open),
-                source: 'twelve_hist'
-              };
+            const inserts = [];
+            data.values.forEach(v => {
+              const vDate = v.datetime.split(' ')[0];
+              if (!existingDates.includes(vDate)) {
+                inserts.push({
+                  ticker: ticker,
+                  date: vDate,
+                  close_price: parseFloat(v.close || v.open),
+                  source: 'twelve_hist'
+                });
+              }
             });
-            await db.from('prices').upsert(inserts, { onConflict: 'date,ticker' });
-          } else if (data.status === "error") {
-            console.warn(data.message);
+            
+            if (inserts.length > 0) {
+              const { error: priceInsError } = await db.from('prices').insert(inserts);
+              if (priceInsError) console.error(priceInsError);
+            }
           }
         } catch (e) {}
         
@@ -2011,7 +2033,8 @@ async function runRecalc() {
   }
 
   statusEl.innerText = `Loading consolidated historical prices...`;
-  const { data: dbPrices } = await db.from('prices').select('date, ticker, close_price').order('date', { ascending: true });
+  
+  const { data: dbPrices } = await db.from('prices').select('date, ticker, close_price').order('date', { ascending: true }).limit(10000);
   
   const pricesMap = {};
   const latestKnownPrice = {};
@@ -2028,6 +2051,12 @@ async function runRecalc() {
       if (!pricesMap[p.date]) pricesMap[p.date] = {};
       pricesMap[p.date][tickerKey] = priceVal;
     }
+  });
+
+  const { data: existingHist } = await db.from('portfolio_history').select('id, date').gte('date', startDate);
+  const histMap = {};
+  (existingHist || []).forEach(row => {
+    histMap[row.date] = row.id;
   });
 
   const baseRow = S.portfolioHistory.filter(h => h.date < startDate).pop();
@@ -2079,8 +2108,7 @@ async function runRecalc() {
     
     let currentROI = totalInvestedAtDate > 0 ? (totalValueAtDate - totalInvestedAtDate) / totalInvestedAtDate : 0;
 
-    await db.from('portfolio_history').upsert({
-        date: currentDate,
+    const payload = {
         portfolio_value_usd: portfolioValueAtDate,
         cash_usd: totalCashAtDate,
         total_value: totalValueAtDate,
@@ -2089,7 +2117,13 @@ async function runRecalc() {
         subperiod_factor: subperiod,
         twrr_cumulative: currentTWRRFactor - 1,
         roi_cumulative: currentROI
-    }, { onConflict: 'date' });
+    };
+
+    if (histMap[currentDate]) {
+      await db.from('portfolio_history').update(payload).eq('id', histMap[currentDate]);
+    } else {
+      await db.from('portfolio_history').insert({ date: currentDate, ...payload });
+    }
 
     prevTotalValue = totalValueAtDate; 
   }
@@ -2101,7 +2135,7 @@ async function runRecalc() {
   closeModal('modal-recalc');
   btn.disabled = false;
   btn.innerText = 'Start Process';
-}  
+}
 
 init();
 </script>

@@ -1614,12 +1614,7 @@ function calcAmt() {
   if(p&&s){const a=document.getElementById('f-amount');if(a)a.value=(p*s).toFixed(2);}
   calcNet();
 }
-function calcNet() {
-  const a=+(document.getElementById('f-amount')?.value||0);
-  const f=+(document.getElementById('f-fee')?.value||0);
-  const t=+(document.getElementById('f-tax')?.value||0);
-  const n=document.getElementById('f-net'); if(n)n.value=(a-f-t).toFixed(2);
-}
+
 
 // ── AUTO-DETECCIÓN Y SUGERENCIA DE SHARES ──
 function checkNewTicker() {
@@ -2034,25 +2029,42 @@ async function runRecalc() {
 
   statusEl.innerText = `Loading consolidated historical prices...`;
   
-  const { data: dbPrices } = await db.from('prices').select('date, ticker, close_price').order('date', { ascending: true }).limit(10000);
+  // Load ALL prices without limit using pagination
+  let dbPrices = [];
+  let pricesPage = 0;
+  const PAGE_SIZE = 5000;
+  while (true) {
+    const { data: page, error: pageErr } = await db.from('prices')
+      .select('date, ticker, close_price')
+      .order('date', { ascending: true })
+      .range(pricesPage * PAGE_SIZE, (pricesPage + 1) * PAGE_SIZE - 1);
+    if (pageErr || !page || page.length === 0) break;
+    dbPrices = dbPrices.concat(page);
+    if (page.length < PAGE_SIZE) break;
+    pricesPage++;
+  }
+  console.log('[Recalc] Loaded', dbPrices.length, 'price records from DB');
   
   const pricesMap = {};
   const latestKnownPrice = {};
 
-  // PRE-SIEMBRA: Llenamos la memoria viva con la data previa a la fecha de inicio
+  // Build price maps — store by both original and uppercase ticker for safety
   (dbPrices || []).forEach(p => {
-    const tickerKey = p.ticker.toUpperCase();
-    const priceVal = Number(p.close_price || 0);
-    
-    if (p.date <= startDate) {
+    const tickerKey = p.ticker.toUpperCase().trim();
+    const priceVal  = Number(p.close_price || 0);
+    if (priceVal <= 0) return;
+
+    // Track latest known price before startDate (for forward-fill)
+    if (p.date < startDate) {
       latestKnownPrice[tickerKey] = priceVal;
     }
-    
+    // Store prices on/after startDate for lookup
     if (p.date >= startDate) {
       if (!pricesMap[p.date]) pricesMap[p.date] = {};
       pricesMap[p.date][tickerKey] = priceVal;
     }
   });
+  console.log('[Recalc] Price map built. Tickers with pre-start prices:', Object.keys(latestKnownPrice).length);
 
   const { data: existingHist } = await db.from('portfolio_history').select('id, date').gte('date', startDate);
   const histMap = {};
@@ -2079,17 +2091,29 @@ async function runRecalc() {
     const dayPrices = pricesMap[currentDate] || {};
 
     open.forEach(p => {
-      const t = p.ticker.toUpperCase();
-      
-      // Si hoy hay precio en la tabla, actualizamos la memoria viva
-      if (dayPrices[t] && Number(dayPrices[t]) > 0) {
-        latestKnownPrice[t] = Number(dayPrices[t]);
+      const t = (p.ticker || '').toUpperCase().trim();
+      if (!t) return;
+
+      // Update forward-fill price if today has a price
+      const todayPrice = dayPrices[t];
+      if (todayPrice && Number(todayPrice) > 0) {
+        latestKnownPrice[t] = Number(todayPrice);
       }
-      
-      // Forzamos el uso del último precio de mercado conocido en la memoria, o el costo promedio como emergencia absoluta
-      const historicalPrice = Number(latestKnownPrice[t] || p.avgCost || 0); 
-      portfolioValueAtDate += Number(p.shares || 0) * historicalPrice;
+
+      // Use best available price: today's → last known → avg cost
+      const historicalPrice = Number(latestKnownPrice[t]) || Number(p.avgCost) || 0;
+      const shares = Number(p.shares || 0);
+      if (historicalPrice > 0 && shares > 0) {
+        portfolioValueAtDate += shares * historicalPrice;
+      }
     });
+
+    // Debug: log if portfolio value is 0 but there are open positions
+    if (portfolioValueAtDate === 0 && open.length > 0) {
+      console.warn('[Recalc] Zero portfolio value on', currentDate, '| open positions:', open.length,
+        '| missing tickers:', open.map(p=>p.ticker).join(','),
+        '| known prices:', Object.keys(latestKnownPrice).length);
+    }
 
     const totalValueAtDate = portfolioValueAtDate + totalCashAtDate;
 
@@ -2104,13 +2128,15 @@ async function runRecalc() {
                   - Number(todayTxs.filter(t=>t.type==='Withdrawal').reduce((s,t)=>Number(s)+Math.abs(Number(t.amount_usd||0)), 0));
 
     let subperiod = 1;
-    if (prevTotalValue > 0) {
-      subperiod = (totalValueAtDate - todayFlow) / prevTotalValue;
-      if (subperiod > 0 && subperiod <= 3.0) {
+    if (prevTotalValue > 0 && totalValueAtDate > 0) {
+      const rawSubperiod = (totalValueAtDate - todayFlow) / prevTotalValue;
+      // Only skip truly impossible values (negative or >300% daily gain)
+      // Do NOT skip large positive values from deposits — that's what the flow adjustment is for
+      if (rawSubperiod > 0 && rawSubperiod < 4.0) {
+        subperiod = rawSubperiod;
         currentTWRRFactor *= subperiod;
-      } else {
-        subperiod = 1; 
       }
+      // If skipped, keep currentTWRRFactor unchanged (subperiod=1 means no change)
     }
     
     let currentROI = totalInvestedAtDate > 0 ? (totalValueAtDate - totalInvestedAtDate) / totalInvestedAtDate : 0;
@@ -2144,6 +2170,40 @@ async function runRecalc() {
   btn.innerText = 'Start Process';
 }   
 
+
+// ── DRIP unit price auto-calculation ──────────────────
+function handleDripSharesInput() {
+  const sharesEl = document.getElementById('f-drip-s');
+  const priceEl  = document.getElementById('f-drip-p');
+  const netEl    = document.getElementById('f-net');
+  if (!sharesEl || !priceEl || !netEl) return;
+
+  const shares   = parseFloat(sharesEl.value || 0);
+  const netAmt   = parseFloat(netEl.value || 0);
+
+  // Unit price = net amount / shares received
+  if (shares > 0 && netAmt > 0) {
+    priceEl.value = (netAmt / shares).toFixed(6);
+  } else {
+    priceEl.value = '';
+  }
+}
+
+// Also recalc when net amount changes while drip-row is visible
+function calcNet() {
+  const a = +(document.getElementById('f-amount')?.value||0);
+  const f = +(document.getElementById('f-fee')?.value||0);
+  const t = +(document.getElementById('f-tax')?.value||0);
+  const n = document.getElementById('f-net');
+  if (n) {
+    n.value = (a - f - t).toFixed(2);
+    // Recalc DRIP unit price if drip row is visible
+    const dripRow = document.getElementById('f-drip-row');
+    if (dripRow && !dripRow.classList.contains('hidden')) {
+      handleDripSharesInput();
+    }
+  }
+}
 
 init();
 </script>

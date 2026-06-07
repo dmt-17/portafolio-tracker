@@ -2039,9 +2039,10 @@ async function runRecalc() {
   const pricesMap = {};
   const latestKnownPrice = {};
 
+  // PRE-SIEMBRA: Llenamos la memoria viva con la data previa a la fecha de inicio
   (dbPrices || []).forEach(p => {
     const tickerKey = p.ticker.toUpperCase();
-    const priceVal = parseFloat(p.close_price);
+    const priceVal = Number(p.close_price || 0);
     
     if (p.date <= startDate) {
       latestKnownPrice[tickerKey] = priceVal;
@@ -2060,8 +2061,8 @@ async function runRecalc() {
   });
 
   const baseRow = S.portfolioHistory.filter(h => h.date < startDate).pop();
-  let currentTWRRFactor = baseRow && baseRow.twrr_cumulative != null ? (parseFloat(baseRow.twrr_cumulative) + 1) : 1;
-  let prevTotalValue = baseRow ? +(baseRow.total_value || baseRow.portfolio_value_usd || 0) : 0;
+  let currentTWRRFactor = baseRow && baseRow.twrr_cumulative != null ? (Number(baseRow.twrr_cumulative) + 1) : 1;
+  let prevTotalValue = baseRow ? Number(baseRow.total_value || baseRow.portfolio_value_usd || 0) : 0;
 
   for (let i = 0; i < totalDays; i++) {
     const currentDate = datesToProcess[i];
@@ -2073,28 +2074,34 @@ async function runRecalc() {
     const { open } = computePos(txsUpToDate); 
     const cashMapAtDate = computeCash(txsUpToDate);
     
-    let totalCashAtDate = Object.values(cashMapAtDate).reduce((s,v)=>s+v,0);
+    let totalCashAtDate = Number(Object.values(cashMapAtDate).reduce((s,v)=>Number(s)+Number(v), 0));
     let portfolioValueAtDate = 0;
     const dayPrices = pricesMap[currentDate] || {};
 
     open.forEach(p => {
       const t = p.ticker.toUpperCase();
-      if (dayPrices[t]) latestKnownPrice[t] = dayPrices[t];
       
-      const historicalPrice = latestKnownPrice[t] || p.avgCost; 
-      portfolioValueAtDate += p.shares * historicalPrice;
+      // Si hoy hay precio en la tabla, actualizamos la memoria viva
+      if (dayPrices[t] && Number(dayPrices[t]) > 0) {
+        latestKnownPrice[t] = Number(dayPrices[t]);
+      }
+      
+      // Forzamos el uso del último precio de mercado conocido en la memoria, o el costo promedio como emergencia absoluta
+      const historicalPrice = Number(latestKnownPrice[t] || p.avgCost || 0); 
+      portfolioValueAtDate += Number(p.shares || 0) * historicalPrice;
     });
 
     const totalValueAtDate = portfolioValueAtDate + totalCashAtDate;
 
     const depositsUpToDate = txsUpToDate.filter(t => t.type === 'Deposit');
     const withdrawalsUpToDate = txsUpToDate.filter(t => t.type === 'Withdrawal');
-    const totalInvestedAtDate = depositsUpToDate.reduce((s,t)=>s+Math.abs(+(t.amount_usd||0)),0) 
-                              - withdrawalsUpToDate.reduce((s,t)=>s+Math.abs(+(t.amount_usd||0)),0);
+    
+    const totalInvestedAtDate = Number(depositsUpToDate.reduce((s,t)=>Number(s)+Math.abs(Number(t.amount_usd||0)), 0)) 
+                              - Number(withdrawalsUpToDate.reduce((s,t)=>Number(s)+Math.abs(Number(t.amount_usd||0)), 0));
 
     const todayTxs = S.transactions.filter(t => t.date === currentDate);
-    let todayFlow = todayTxs.filter(t=>t.type==='Deposit').reduce((s,t)=>s+Math.abs(+(t.amount_usd||0)),0)
-                  - todayTxs.filter(t=>t.type==='Withdrawal').reduce((s,t)=>s+Math.abs(+(t.amount_usd||0)),0);
+    let todayFlow = Number(todayTxs.filter(t=>t.type==='Deposit').reduce((s,t)=>Number(s)+Math.abs(Number(t.amount_usd||0)), 0))
+                  - Number(todayTxs.filter(t=>t.type==='Withdrawal').reduce((s,t)=>Number(s)+Math.abs(Number(t.amount_usd||0)), 0));
 
     let subperiod = 1;
     if (prevTotalValue > 0) {
@@ -2135,7 +2142,8 @@ async function runRecalc() {
   closeModal('modal-recalc');
   btn.disabled = false;
   btn.innerText = 'Start Process';
-}
+}   
+
 
 init();
 </script>

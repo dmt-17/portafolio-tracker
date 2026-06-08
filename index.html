@@ -1963,126 +1963,86 @@ async function runRecalc() {
   }
   const totalDays = datesToProcess.length;
 
-  statusEl.innerText = `Checking for missing historical prices...`;
-  
-  const activeTickersInPeriod = [...new Set(
-    S.transactions.filter(t => t.ticker && t.date <= todayStr).map(t => t.ticker.toUpperCase().trim())
-  )];
+  statusEl.innerText = `Loading consolidated historical prices...`;
 
-  if (activeTickersInPeriod.length > 0) {
-    for (const ticker of activeTickersInPeriod) {
-      const { data: existingPrices } = await db
-        .from('prices')
-        .select('date')
-        .eq('ticker', ticker)
-        .gte('date', startDate);
-        
-      const existingDates = existingPrices ? existingPrices.map(p => p.date).sort() : [];
-      const lastRecordedDate = existingDates.length > 0 ? existingDates[existingDates.length - 1] : null;
-      
-      let fetchStart = null;
+  // ============================================================
+  // 1. PAGINACIÓN REAL (El arreglo vital de Claude para +7900 registros)
+  // ============================================================
+  let dbPrices = [];
+  let page = 0;
+  const pageSize = 1000;
+  let fetchMore = true;
 
-      if (!lastRecordedDate) {
-        fetchStart = startDate;
-      } else {
-        const msDiff = new Date(todayStr + 'T00:00:00') - new Date(lastRecordedDate + 'T00:00:00');
-        const daysSinceLast = msDiff / (1000 * 60 * 60 * 24);
-        
-        if (daysSinceLast > 3) {
-          let nextDay = new Date(lastRecordedDate + 'T00:00:00');
-          nextDay.setDate(nextDay.getDate() + 1);
-          fetchStart = nextDay.toISOString().split('T')[0];
-        }
-      }
-
-      if (fetchStart) {
-        statusEl.innerText = `Downloading ${ticker} from ${fetchStart}... (Waiting 8s)`;
-        try {
-          const res = await fetch(`https://api.twelvedata.com/time_series?symbol=${ticker}&interval=1day&start_date=${fetchStart}&end_date=${todayStr}&apikey=${TWELVE_DATA_KEY}`);
-          const data = await res.json();
-          
-          if (data.values && data.values.length > 0) {
-            const inserts = [];
-            data.values.forEach(v => {
-              const vDate = v.datetime.split(' ')[0];
-              if (!existingDates.includes(vDate)) {
-                inserts.push({
-                  ticker: ticker,
-                  date: vDate,
-                  close_price: parseFloat(v.close || v.open),
-                  source: 'twelve_hist'
-                });
-              }
-            });
-            
-            if (inserts.length > 0) {
-              const { error: priceInsError } = await db.from('prices').insert(inserts);
-              if (priceInsError) console.error(priceInsError);
-            }
-          }
-        } catch (e) {}
-        
-        await new Promise(r => setTimeout(r, 8000));
-      }
+  while (fetchMore) {
+    const { data, error } = await db.from('prices')
+      .select('date, ticker, close_price')
+      .order('date', { ascending: true })
+      .range(page * pageSize, (page + 1) * pageSize - 1);
+    
+    if (error) {
+      console.error("Error fetching prices:", error);
+      break;
+    }
+    if (data && data.length > 0) {
+      dbPrices.push(...data);
+      page++;
+    } else {
+      fetchMore = false;
     }
   }
 
-  statusEl.innerText = `Loading consolidated historical prices...`;
-  
-  // Load ALL prices without limit using pagination
-  let dbPrices = [];
-  let pricesPage = 0;
-  const PAGE_SIZE = 5000;
-  while (true) {
-    const { data: page, error: pageErr } = await db.from('prices')
-      .select('date, ticker, close_price')
-      .order('date', { ascending: true })
-      .range(pricesPage * PAGE_SIZE, (pricesPage + 1) * PAGE_SIZE - 1);
-    if (pageErr || !page || page.length === 0) break;
-    dbPrices = dbPrices.concat(page);
-    if (page.length < PAGE_SIZE) break;
-    pricesPage++;
-  }
-  console.log('[Recalc] Loaded', dbPrices.length, 'price records from DB');
-  
+  // ============================================================
+  // 2. CONSTRUIR MEMORIA VIVA (El Asesino de Fechas 'T')
+  // ============================================================
   const pricesMap = {};
   const latestKnownPrice = {};
 
-  // Build price maps — store by both original and uppercase ticker for safety
-  (dbPrices || []).forEach(p => {
-    const tickerKey = p.ticker.toUpperCase().trim();
-    const priceVal  = Number(p.close_price || 0);
-    if (priceVal <= 0) return;
-
-    // Track latest known price before startDate (for forward-fill)
-    if (p.date < startDate) {
+  dbPrices.forEach(p => {
+    const tickerKey = String(p.ticker).toUpperCase().trim();
+    const priceVal = Number(p.close_price || 0);
+    
+    // CORRECCIÓN CRÍTICA: Cortamos el Timestamp de Supabase para que cruce con JS
+    const pDate = p.date.split('T')[0]; 
+    
+    if (pDate <= startDate) {
       latestKnownPrice[tickerKey] = priceVal;
     }
-    // Store prices on/after startDate for lookup
-    if (p.date >= startDate) {
-      if (!pricesMap[p.date]) pricesMap[p.date] = {};
-      pricesMap[p.date][tickerKey] = priceVal;
+    
+    if (pDate >= startDate) {
+      if (!pricesMap[pDate]) pricesMap[pDate] = {};
+      pricesMap[pDate][tickerKey] = priceVal;
     }
   });
-  console.log('[Recalc] Price map built. Tickers with pre-start prices:', Object.keys(latestKnownPrice).length);
 
+  // PREPARAR HISTORIAL
   const { data: existingHist } = await db.from('portfolio_history').select('id, date').gte('date', startDate);
   const histMap = {};
   (existingHist || []).forEach(row => {
-    histMap[row.date] = row.id;
+    histMap[row.date.split('T')[0]] = row.id;
   });
 
-  const baseRow = S.portfolioHistory.filter(h => h.date < startDate).pop();
+  // Buscar el estado del portafolio un día antes del inicio para arrastrar TWRR y Prev Value
+  const { data: pastHist } = await db.from('portfolio_history')
+    .select('twrr_cumulative, total_value, portfolio_value_usd, date')
+    .lt('date', startDate)
+    .order('date', { ascending: false })
+    .limit(1);
+
+  const baseRow = pastHist && pastHist.length > 0 ? pastHist[0] : null;
   let currentTWRRFactor = baseRow && baseRow.twrr_cumulative != null ? (Number(baseRow.twrr_cumulative) + 1) : 1;
   let prevTotalValue = baseRow ? Number(baseRow.total_value || baseRow.portfolio_value_usd || 0) : 0;
 
+  // ============================================================
+  // 3. RECALCULAR DÍA POR DÍA MATEMÁTICAMENTE
+  // ============================================================
   for (let i = 0; i < totalDays; i++) {
     const currentDate = datesToProcess[i];
 
     statusEl.innerText = `Calculating metrics for ${currentDate} (${i+1}/${totalDays})`;
     barEl.style.width = ((i+1)/totalDays * 100) + '%';
 
-    const txsUpToDate = S.transactions.filter(t => t.date <= currentDate);
+    // Cortamos el 'T' también en las transacciones por seguridad extrema
+    const txsUpToDate = S.transactions.filter(t => t.date.split('T')[0] <= currentDate);
     const { open } = computePos(txsUpToDate); 
     const cashMapAtDate = computeCash(txsUpToDate);
     
@@ -2090,53 +2050,46 @@ async function runRecalc() {
     let portfolioValueAtDate = 0;
     const dayPrices = pricesMap[currentDate] || {};
 
+    let missingPrices = [];
+
     open.forEach(p => {
-      const t = (p.ticker || '').toUpperCase().trim();
-      if (!t) return;
-
-      // Update forward-fill price if today has a price
-      const todayPrice = dayPrices[t];
-      if (todayPrice && Number(todayPrice) > 0) {
-        latestKnownPrice[t] = Number(todayPrice);
+      const t = String(p.ticker).toUpperCase().trim();
+      
+      // Si el mercado abrió hoy, actualizamos la memoria viva
+      if (dayPrices[t] && Number(dayPrices[t]) > 0) {
+        latestKnownPrice[t] = Number(dayPrices[t]);
       }
+      
+      const historicalPrice = Number(latestKnownPrice[t] || p.avgCost || 0); 
+      if (historicalPrice === p.avgCost) missingPrices.push(t);
 
-      // Use best available price: today's → last known → avg cost
-      const historicalPrice = Number(latestKnownPrice[t]) || Number(p.avgCost) || 0;
-      const shares = Number(p.shares || 0);
-      if (historicalPrice > 0 && shares > 0) {
-        portfolioValueAtDate += shares * historicalPrice;
-      }
+      portfolioValueAtDate += Number(p.shares || 0) * historicalPrice;
     });
 
-    // Debug: log if portfolio value is 0 but there are open positions
-    if (portfolioValueAtDate === 0 && open.length > 0) {
-      console.warn('[Recalc] Zero portfolio value on', currentDate, '| open positions:', open.length,
-        '| missing tickers:', open.map(p=>p.ticker).join(','),
-        '| known prices:', Object.keys(latestKnownPrice).length);
+    // Consola de ayuda de Claude
+    if (missingPrices.length > 0 && portfolioValueAtDate === 0) {
+       console.warn(`Día ${currentDate}: Portafolio en 0. Falta precio para:`, missingPrices);
     }
 
     const totalValueAtDate = portfolioValueAtDate + totalCashAtDate;
 
-    const depositsUpToDate = txsUpToDate.filter(t => t.type === 'Deposit');
-    const withdrawalsUpToDate = txsUpToDate.filter(t => t.type === 'Withdrawal');
-    
-    const totalInvestedAtDate = Number(depositsUpToDate.reduce((s,t)=>Number(s)+Math.abs(Number(t.amount_usd||0)), 0)) 
-                              - Number(withdrawalsUpToDate.reduce((s,t)=>Number(s)+Math.abs(Number(t.amount_usd||0)), 0));
-
-    const todayTxs = S.transactions.filter(t => t.date === currentDate);
+    // Calcular depósitos/retiros estrictamente de ese día
+    const todayTxs = S.transactions.filter(t => t.date.split('T')[0] === currentDate);
     let todayFlow = Number(todayTxs.filter(t=>t.type==='Deposit').reduce((s,t)=>Number(s)+Math.abs(Number(t.amount_usd||0)), 0))
                   - Number(todayTxs.filter(t=>t.type==='Withdrawal').reduce((s,t)=>Number(s)+Math.abs(Number(t.amount_usd||0)), 0));
 
+    const totalInvestedAtDate = Number(txsUpToDate.filter(t => t.type === 'Deposit').reduce((s,t)=>Number(s)+Math.abs(Number(t.amount_usd||0)), 0)) 
+                              - Number(txsUpToDate.filter(t => t.type === 'Withdrawal').reduce((s,t)=>Number(s)+Math.abs(Number(t.amount_usd||0)), 0));
+
     let subperiod = 1;
-    if (prevTotalValue > 0 && totalValueAtDate > 0) {
-      const rawSubperiod = (totalValueAtDate - todayFlow) / prevTotalValue;
-      // Only skip truly impossible values (negative or >300% daily gain)
-      // Do NOT skip large positive values from deposits — that's what the flow adjustment is for
-      if (rawSubperiod > 0 && rawSubperiod < 4.0) {
-        subperiod = rawSubperiod;
+    if (prevTotalValue > 0) {
+      subperiod = (totalValueAtDate - todayFlow) / prevTotalValue;
+      // Filtro TWRR de Claude: ignoramos valores matemáticamente absurdos en vez de depósitos grandes
+      if (subperiod > 0 && subperiod <= 4.0) {
         currentTWRRFactor *= subperiod;
+      } else {
+        subperiod = 1; 
       }
-      // If skipped, keep currentTWRRFactor unchanged (subperiod=1 means no change)
     }
     
     let currentROI = totalInvestedAtDate > 0 ? (totalValueAtDate - totalInvestedAtDate) / totalInvestedAtDate : 0;
@@ -2168,43 +2121,7 @@ async function runRecalc() {
   closeModal('modal-recalc');
   btn.disabled = false;
   btn.innerText = 'Start Process';
-}   
-
-
-// ── DRIP unit price auto-calculation ──────────────────
-function handleDripSharesInput() {
-  const sharesEl = document.getElementById('f-drip-s');
-  const priceEl  = document.getElementById('f-drip-p');
-  const netEl    = document.getElementById('f-net');
-  if (!sharesEl || !priceEl || !netEl) return;
-
-  const shares   = parseFloat(sharesEl.value || 0);
-  const netAmt   = parseFloat(netEl.value || 0);
-
-  // Unit price = net amount / shares received
-  if (shares > 0 && netAmt > 0) {
-    priceEl.value = (netAmt / shares).toFixed(6);
-  } else {
-    priceEl.value = '';
-  }
 }
-
-// Also recalc when net amount changes while drip-row is visible
-function calcNet() {
-  const a = +(document.getElementById('f-amount')?.value||0);
-  const f = +(document.getElementById('f-fee')?.value||0);
-  const t = +(document.getElementById('f-tax')?.value||0);
-  const n = document.getElementById('f-net');
-  if (n) {
-    n.value = (a - f - t).toFixed(2);
-    // Recalc DRIP unit price if drip row is visible
-    const dripRow = document.getElementById('f-drip-row');
-    if (dripRow && !dripRow.classList.contains('hidden')) {
-      handleDripSharesInput();
-    }
-  }
-}
-
 init();
 </script>
 </body>
